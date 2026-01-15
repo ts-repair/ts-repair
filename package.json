@@ -1,0 +1,56 @@
+{
+  "name": "ts-repair",
+  "version": "0.2.0",
+  "description": "Oracle-guided TypeScript repair engine. Turns compiler diagnostics into verified repair plans for agents.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "ts-repair": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "bun run build",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "test:fast": "bun test tests/oracle tests/output",
+    "test:slow": "bun test tests/golden tests/efficiency",
+    "dev": "bun run src/cli.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ts-repair/ts-repair.git"
+  },
+  "homepage": "https://ts-repair.github.io/",
+  "bugs": {
+    "url": "https://github.com/ts-repair/ts-repair/issues"
+  },
+  "keywords": [
+    "typescript",
+    "repair",
+    "agent",
+    "llm",
+    "diagnostics",
+    "code-fix",
+    "oracle"
+  ],
+  "author": "ts-repair",
+  "license": "MIT",
+  "dependencies": {
+    "typescript": "^5.3.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^20.0.0"
+  }
+}

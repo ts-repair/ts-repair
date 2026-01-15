@@ -1,0 +1,16 @@
+{
+  "summary": {
+    "initialErrors": 0,
+    "finalErrors": 0,
+    "fixedCount": 0,
+    "remainingCount": 0,
+    "budget": {
+      "candidatesGenerated": 0,
+      "candidatesVerified": 0,
+      "verificationBudget": 500,
+      "budgetExhausted": false
+    }
+  },
+  "steps": [],
+  "remaining": []
+}

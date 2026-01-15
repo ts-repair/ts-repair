@@ -1,0 +1,35 @@
+{
+  "summary": {
+    "initialErrors": 2,
+    "finalErrors": 2,
+    "fixedCount": 0,
+    "remainingCount": 2,
+    "budget": {
+      "candidatesGenerated": 0,
+      "candidatesVerified": 0,
+      "verificationBudget": 500,
+      "budgetExhausted": false
+    }
+  },
+  "steps": [],
+  "remaining": [
+    {
+      "code": 2355,
+      "message": "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
+      "file": "fixtures/no-fixes-available/index.ts",
+      "line": 5,
+      "column": 22,
+      "disposition": "NoGeneratedCandidate",
+      "candidateCount": 0
+    },
+    {
+      "code": 2304,
+      "message": "Cannot find name 'completelyMadeUpVariableName'.",
+      "file": "fixtures/no-fixes-available/index.ts",
+      "line": 11,
+      "column": 13,
+      "disposition": "NoGeneratedCandidate",
+      "candidateCount": 0
+    }
+  ]
+}

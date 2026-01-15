@@ -1,0 +1,29 @@
+{
+  "summary": {
+    "initialErrors": 2,
+    "finalErrors": 2,
+    "fixedCount": 0,
+    "remainingCount": 2
+  },
+  "steps": [],
+  "remaining": [
+    {
+      "code": 2552,
+      "message": "Cannot find name 'formatDate'. Did you mean 'FormData'?",
+      "file": "fixtures/missing-import/index.ts",
+      "line": 2,
+      "column": 16,
+      "disposition": "AutoFixableHighRisk",
+      "candidateCount": 1
+    },
+    {
+      "code": 2552,
+      "message": "Cannot find name 'parseDate'. Did you mean 'parsed'?",
+      "file": "fixtures/missing-import/index.ts",
+      "line": 3,
+      "column": 16,
+      "disposition": "AutoFixableHighRisk",
+      "candidateCount": 1
+    }
+  ]
+}

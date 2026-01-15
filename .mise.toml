@@ -1,0 +1,23 @@
+[tools]
+bun = "latest"
+node = "22"
+
+[tasks.install]
+run = "bun install"
+description = "Install dependencies"
+
+[tasks.check]
+run = "bun run check"
+description = "TypeScript type check"
+
+[tasks.test]
+run = "bun test"
+description = "Run all tests"
+
+[tasks.build]
+run = "bun run build"
+description = "Build the project"
+
+[tasks.dev]
+run = "bun run src/cli.ts"
+description = "Run in dev mode"

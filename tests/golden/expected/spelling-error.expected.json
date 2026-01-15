@@ -1,0 +1,43 @@
+{
+  "summary": {
+    "initialErrors": 1,
+    "finalErrors": 0,
+    "fixedCount": 1,
+    "remainingCount": 0,
+    "budget": {
+      "candidatesGenerated": 2,
+      "candidatesVerified": 2,
+      "verificationBudget": 500,
+      "budgetExhausted": false
+    }
+  },
+  "steps": [
+    {
+      "id": "fix-0",
+      "fixName": "fixMissingMember",
+      "fixDescription": "Declare property 'naem'",
+      "risk": "medium",
+      "diagnostic": {
+        "code": 2339,
+        "message": "Property 'naem' does not exist on type 'User'.",
+        "file": "fixtures/spelling-error/index.ts",
+        "line": 8,
+        "column": 25
+      },
+      "changes": [
+        {
+          "file": "fixtures/spelling-error/index.ts",
+          "start": 78,
+          "end": 78,
+          "newText": "\nnaem: any;"
+        }
+      ],
+      "effect": {
+        "before": 1,
+        "after": 0,
+        "delta": 1
+      }
+    }
+  ],
+  "remaining": []
+}

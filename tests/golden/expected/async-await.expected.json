@@ -1,0 +1,43 @@
+{
+  "summary": {
+    "initialErrors": 1,
+    "finalErrors": 0,
+    "fixedCount": 1,
+    "remainingCount": 0,
+    "budget": {
+      "candidatesGenerated": 1,
+      "candidatesVerified": 1,
+      "verificationBudget": 500,
+      "budgetExhausted": false
+    }
+  },
+  "steps": [
+    {
+      "id": "fix-0",
+      "fixName": "fixAwaitInSyncFunction",
+      "fixDescription": "Add async modifier to containing function",
+      "risk": "low",
+      "diagnostic": {
+        "code": 1308,
+        "message": "'await' expressions are only allowed within async functions and at the top levels of modules.",
+        "file": "fixtures/async-await/index.ts",
+        "line": 8,
+        "column": 16
+      },
+      "changes": [
+        {
+          "file": "fixtures/async-await/index.ts",
+          "start": 124,
+          "end": 124,
+          "newText": "async "
+        }
+      ],
+      "effect": {
+        "before": 1,
+        "after": 0,
+        "delta": 1
+      }
+    }
+  ],
+  "remaining": []
+}
