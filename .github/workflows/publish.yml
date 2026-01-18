@@ -4,6 +4,12 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run only (no actual publish)'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   publish:
@@ -11,6 +17,26 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Validate version matches release tag
+        if: github.event_name == 'release'
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          RELEASE_TAG="${{ github.event.release.tag_name }}"
+          # Strip 'v' prefix from tag if present
+          RELEASE_VERSION="${RELEASE_TAG#v}"
+
+          echo "Package version: $PACKAGE_VERSION"
+          echo "Release tag: $RELEASE_TAG"
+          echo "Release version (stripped): $RELEASE_VERSION"
+
+          if [ "$PACKAGE_VERSION" != "$RELEASE_VERSION" ]; then
+            echo "::error::Version mismatch! package.json has $PACKAGE_VERSION but release tag is $RELEASE_TAG"
+            echo "Please update package.json version to match the release tag."
+            exit 1
+          fi
+
+          echo "✓ Version validated: $PACKAGE_VERSION"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -32,7 +58,36 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Dry run - verify package contents
+        run: |
+          echo "=== Package contents ==="
+          npm pack --dry-run
+
+          echo ""
+          echo "=== Package metadata ==="
+          node -e "
+            const pkg = require('./package.json');
+            console.log('Name:', pkg.name);
+            console.log('Version:', pkg.version);
+            console.log('Main:', pkg.main);
+            console.log('Types:', pkg.types);
+            console.log('Files:', pkg.files);
+          "
+
+          echo ""
+          echo "=== Verifying dist/ exists ==="
+          if [ ! -d "dist" ]; then
+            echo "::error::dist/ directory not found. Build may have failed."
+            exit 1
+          fi
+          ls -la dist/
+
       - name: Publish to npm
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Skip publish (dry run)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: echo "Dry run complete. Skipping actual publish."
