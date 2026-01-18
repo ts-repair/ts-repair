@@ -222,20 +222,33 @@ for (const remaining of plan.remaining) {
 ts-repair exposes tunable budgets, risk policy, and scoring weights for candidate ranking.
 See [docs/CONFIG.md](docs/CONFIG.md) for the full list of options and defaults.
 
-### MCP Tool (for Claude Code, etc.)
+### Agent Integration (Claude Code, OpenCode, Codex)
 
-ts-repair exposes an MCP tool that agents can call directly:
+ts-repair integrates with AI coding assistants via the Model Context Protocol (MCP).
 
+**Quick Setup for Claude Code:**
+
+Add to `~/.claude/settings.json`:
 ```json
 {
-  "tool": "ts_repair",
-  "arguments": {
-    "project": "./tsconfig.json"
+  "mcpServers": {
+    "ts-repair": {
+      "command": "npx",
+      "args": ["ts-repair", "mcp-server"]
+    }
   }
 }
 ```
 
-Returns a structured repair plan that the agent can apply.
+**MCP Tools Available:**
+
+| Tool | Description |
+|------|-------------|
+| `ts_repair_plan` | Generate a verified repair plan |
+| `ts_repair_apply` | Apply verified repairs to files |
+| `ts_repair_check` | Quick error count check |
+
+See [docs/AGENT_INTEGRATION.md](docs/AGENT_INTEGRATION.md) for full setup guides for Claude Code, OpenCode, and Codex CLI.
 
 ---
 
@@ -315,6 +328,7 @@ mise run check
 
 * [Architecture](docs/ARCHITECTURE.md) — System design and components
 * [Configuration](docs/CONFIG.md) — Runtime tuning and defaults
+* [Agent Integration](docs/AGENT_INTEGRATION.md) — MCP server setup for agents
 * [Product Requirements](docs/PRD.md) — Full specification and design rationale
 * [Roadmap](docs/ROADMAP.md) — Implementation phases and status
 * [CLAUDE.md](CLAUDE.md) — Development guidance

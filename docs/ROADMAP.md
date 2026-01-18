@@ -187,16 +187,29 @@ The planner MUST invoke the solver when any of these conditions are detected:
 
 These conditions are machine-detectable, not heuristic.
 
-### Phase 6: Agent Integration
+### Phase 6: Agent Integration ✅ Complete
 
-Make ts-repair consumable by agent frameworks.
+Make ts-repair consumable by agent frameworks via Model Context Protocol (MCP).
 
 | Component | Status | Priority | Notes |
 |-----------|--------|----------|-------|
-| MCP tool | 📋 Planned | High | For Claude Code integration |
-| Programmatic API | 📋 Planned | High | `import { repair } from 'ts-repair'` |
-| Apply mode | 📋 Planned | Medium | `--apply` to write fixes |
+| MCP server | ✅ Done | High | `ts-repair mcp-server` command |
+| ts_repair_plan tool | ✅ Done | High | Generate verified repair plan via MCP |
+| ts_repair_apply tool | ✅ Done | High | Apply verified repairs via MCP |
+| ts_repair_check tool | ✅ Done | High | Quick error count via MCP |
+| Claude Code skill | ✅ Done | High | Skill file in `skills/claude-code/` |
+| OpenCode skill | ✅ Done | High | Skill file in `skills/opencode/` |
+| Codex CLI skill | ✅ Done | High | Skill file in `skills/codex/` |
+| Agent integration docs | ✅ Done | High | `docs/AGENT_INTEGRATION.md` |
+| Programmatic API | ✅ Done | High | `import { repair } from 'ts-repair'` (existing) |
+| Apply mode | ✅ Done | Medium | `--apply` flag (existing) |
 | Watch mode | 📋 Planned | Low | Continuous repair on change |
+
+**Implementation notes:**
+- MCP server implemented in `src/mcp/server.ts` using `@modelcontextprotocol/sdk`
+- Server communicates over stdio using JSON-RPC (Model Context Protocol)
+- Skills teach agents when/how to use ts-repair for TypeScript error fixing
+- Compatible with Claude Code, OpenCode, and Codex CLI
 
 ### Phase 7: Protocol Specification
 
@@ -411,13 +424,14 @@ The following components from the old ts-repair (language compiler) should be re
 | Dependency | Purpose |
 |------------|---------|
 | `typescript` | TypeScript compiler API |
+| `@modelcontextprotocol/sdk` | MCP server for agent integration |
+| `zod` | Schema validation for MCP tools |
 
 ### Optional
 
 | Dependency | Purpose |
 |------------|---------|
 | `glpk.js` or similar | ILP solver for Phase 5 |
-| `@modelcontextprotocol/sdk` | MCP tool integration |
 
 ---
 
@@ -433,7 +447,7 @@ The following components from the old ts-repair (language compiler) should be re
 | Phase 3 | ✅ Done | Classification |
 | Phase 4 | ✅ Done | Dependency metadata + batching |
 | Phase 5 | 📋 Planned | Solver (if needed) |
-| Phase 6 | 📋 Planned | Agent integration (MCP) |
+| Phase 6 | ✅ Done | Agent integration (MCP + Skills) |
 | Phase 7 | After benchmarks | Protocol specification |
 | Phase 8 | After protocol | Multi-language support |
 | Phase 9 | Optional | Learning (weight tuning) |
@@ -535,4 +549,4 @@ TypeScript's code fix suggestions sometimes prefer re-export paths (e.g., `impor
 ---
 
 *Last updated: January 18, 2026*
-*Phases 1-4, 2.5-2.7 complete. Next: Phase 5 (Solver) or Phase 6 (Agent Integration).*
+*Phases 1-4, 2.5-2.7, 6 complete. Next: Phase 5 (Solver) or Phase 7 (Protocol Specification).*
