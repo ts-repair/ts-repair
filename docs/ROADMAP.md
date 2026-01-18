@@ -472,28 +472,31 @@ Benchmark ts-repair against normal tsc + agent workflows to measure concrete sav
 
 Issues discovered during ad-hoc benchmarking (January 2026):
 
-### Bug: AutoFixable items not committed to steps
+### ~~Bug: AutoFixable items not committed to steps~~ ✅ Fixed
 
-**Severity:** High
+**Status:** Fixed (January 18, 2026)
 **Location:** `src/oracle/planner.ts`
 
-The planner correctly classifies some diagnostics as `AutoFixable` but fails to include them in the `steps` array of the repair plan. This means `apply --auto` has nothing to apply even when AutoFixable repairs exist.
+The original issue was that `classifyRemaining()` used different scoring criteria than the main planning loop, which could theoretically lead to a diagnostic being classified as `AutoFixable` but not included in `steps`.
 
-**Reproduction:** Run `ts-repair plan` on a project with `await` expressions in non-async functions. The plan will show `disposition: "AutoFixable"` but `steps: []`.
+**Root cause:** Classification used weighted scoring (`score > 0`) while planning (in delta mode) used `delta > 0`. This inconsistency has been fixed by making classification use the same scoring strategy as the planning loop.
 
-**Expected:** AutoFixable items should be committed to steps during planning, or the classification should happen after step generation.
+**Resolution:** Classification now respects `opts.scoringStrategy` and uses the same criteria as planning.
 
-### Issue: Multi-file import chains not fully verified
+### ~~Issue: Multi-file import chains not fully verified~~ ✅ Not Reproducible
 
-**Severity:** Medium
+**Status:** Could not reproduce (January 18, 2026)
 **Location:** `src/oracle/verify.ts`
 
-When a missing import (e.g., `HTTPError`) is used in multiple files, adding the import to one file doesn't reduce the total error count because the same symbol is still missing elsewhere. The verification correctly returns delta=0, but this causes the fix to be marked as `NoVerifiedCandidate` when it's actually a correct partial fix.
+Investigation found that multi-file imports work correctly:
+- Each file's error count is independent
+- Fixing file A's import reduces total errors by the count in file A
+- Fixing file B's import in the next iteration reduces remaining errors
+- Both files get fixed through iterative planning
 
-**Possible solutions:**
-1. Group related diagnostics across files before verification
-2. Allow fixes with delta=0 if they resolve the specific diagnostic
-3. Multi-file batched verification
+The original description suggested `delta=0` when adding an import to one file, but testing shows each file's fix has `delta > 0` because errors in different files don't cancel each other out.
+
+**Resolution:** No fix needed. If this issue recurs with a specific reproduction case, please document the exact project structure.
 
 ### Observation: Re-export imports vs direct imports
 

@@ -889,16 +889,36 @@ function classifyRemaining(
     }
 
     // Check if any fix actually helps
+    // Use the same criteria as the main planning loop for consistency
     let hasLowRiskFix = false;
     let validFixCount = 0;
 
     for (const fix of fixes.slice(0, opts.maxCandidates)) {
       const result = verify(host, diagnostic, fix);
-
       const risk = assessRisk(fix.fixName);
-      const score = computeScore(result, risk, opts.scoreWeights);
 
-      if (result.targetFixed && score > 0 && result.resolvedWeight > 0) {
+      // Skip high-risk fixes if not allowed
+      if (risk === "high" && !opts.includeHighRisk) {
+        continue;
+      }
+
+      // Check if target was actually fixed
+      if (!result.targetFixed) {
+        continue;
+      }
+
+      // Use the same scoring criteria as the main loop
+      let isValidFix = false;
+      if (opts.scoringStrategy === "weighted") {
+        const score = computeScore(result, risk, opts.scoreWeights);
+        // Weighted scoring requires positive score AND positive delta (monotonic progress)
+        isValidFix = score > 0 && result.delta > 0;
+      } else {
+        // Delta scoring requires positive delta
+        isValidFix = result.delta > 0;
+      }
+
+      if (isValidFix) {
         validFixCount++;
         if (risk === "low" || risk === "medium") {
           hasLowRiskFix = true;
