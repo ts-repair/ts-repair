@@ -43,25 +43,68 @@ Production-quality implementation with full test coverage.
 | Unit tests | ✅ Done | High | 125 tests across oracle, classify, output |
 | Integration tests | ✅ Done | High | Golden tests + fixture projects |
 
-### Phase 2.5: Budget Constraints 📋 Planned
+### Phase 2.5: Budget Constraints ✅ Complete
 
-Add verification budget as a first-class constraint in the Planner + Verification layers.
+Verification budget as a first-class constraint in the Planner + Verification layers.
 
 | Component | Status | Priority | Notes |
 |-----------|--------|----------|-------|
-| Candidates per diagnostic | 📋 Planned | High | Cap candidates considered per diagnostic |
-| Candidates per iteration | 📋 Planned | High | Cap total candidates per planning iteration |
-| Total verification budget | 📋 Planned | High | Cap total verification runs per plan |
-| Pre-verification pruning | 📋 Planned | High | Prune by cheap priors before verification |
-| Graceful degradation | 📋 Planned | High | Return partial plan when budget exhausted |
-| Budget counters in output | 📋 Planned | Medium | Report usage for tuning thresholds |
+| Candidates per diagnostic | ✅ Done | High | `maxCandidates` option (default 10) |
+| Candidates per iteration | ✅ Done | High | `maxCandidatesPerIteration` option (default 100) |
+| Total verification budget | ✅ Done | High | `maxVerifications` option (default 500) |
+| Pre-verification pruning | ✅ Done | High | `pruneCandidates()` using risk level + diff size |
+| Graceful degradation | ✅ Done | High | `budgetExhausted` flag, remaining → NeedsJudgment |
+| Budget counters in output | ✅ Done | Medium | `BudgetStats` in RepairPlan summary |
+
+**Implementation notes:**
+- Budget constraints live in Planner (`src/oracle/planner.ts`)
+- `pruneCandidates()` scores by risk level (low=30, medium=20, high=10) minus diff size penalty
+- When budget exhausted: returns partial plan, remaining diagnostics classified as NeedsJudgment
+- Output includes `BudgetStats`: candidatesGenerated, candidatesVerified, verificationBudget, budgetExhausted
+
+### Phase 2.6: CLI Implementation 📋 Planned
+
+Implement the full CLI as specified in [docs/ts_repair_cli_specification.md](ts_repair_cli_specification.md).
+
+| Component | Status | Priority | Notes |
+|-----------|--------|----------|-------|
+| `ts-repair tsc` command | 📋 Planned | High | tsc-compatible passthrough with `--plan` and `--auto` flags |
+| `ts-repair check` command | 📋 Planned | High | Convenience wrapper for `tsc --noEmit` |
+| `ts-repair plan` command | 📋 Planned | High | Generate verified repair plan (replaces current `repair`) |
+| `ts-repair apply` command | 📋 Planned | High | Apply repairs from plan or `--auto` mode |
+| `ts-repair explain` command | 📋 Planned | Medium | Explain specific repair candidates |
+| Global options | 📋 Planned | High | `-p/--project`, `--format`, `--verbose` |
+| Exit codes | 📋 Planned | High | 0=clean, 1=diagnostics remain, 2=tool error |
+| `tsr` alias | 📋 Planned | Low | Optional convenience alias |
 
 **Design notes:**
-- Budget constraints live in Planner + Verification layers, NOT in CLI or output formatting
-- Candidate generation may emit more than budget; Planner prunes before calling Verification
-- Pruning heuristics: fix-kind, locality, diff size, risk class (cheap priors)
-- When budget exhausted: return best verified partial plan + remaining classified as NeedsJudgment/NoCandidate
-- Output must include budget counters (candidatesGenerated, candidatesVerified, budgetRemaining)
+- Drop-in compatible with existing `tsc` workflows
+- Deterministic and scriptable for agents and CI
+- Default format: text for `tsc`/`check`, json for `plan`/`apply`
+- No workspace mutation without explicit `apply` or `--auto`
+
+### Phase 2.7: Scoring Function 📋 Planned
+
+Implement the weighted scoring function from the PRD for ranking repair candidates.
+
+| Component | Status | Priority | Notes |
+|-----------|--------|----------|-------|
+| resolvedWeight calculation | 📋 Planned | Medium | Weighted sum of resolved diagnostics |
+| introducedWeight penalty | 📋 Planned | Medium | Weighted penalty (K multiplier) |
+| editSize penalty | 📋 Planned | Medium | Tokens/nodes changed (α multiplier) |
+| semanticRiskPenalty | 📋 Planned | Medium | Risk-based penalty |
+
+**Scoring Formula (from PRD):**
+
+```
+score = resolvedWeight - (introducedWeight × K) - (editSize × α) - semanticRiskPenalty
+```
+
+Where:
+- `introducedWeight` is typically a hard or near-hard penalty
+- `semanticRiskPenalty` follows: imports < guards < coercions < casts
+
+**Note:** Currently using simpler delta-based ranking. This phase adds the full weighted formula.
 
 ### Phase 3: Diagnostic Classification ✅ Complete
 
@@ -109,10 +152,25 @@ Fallback to constraint solver when greedy stalls.
 
 | Component | Status | Priority | Notes |
 |-----------|--------|----------|-------|
-| Trigger detection | 📋 Planned | Low | When to invoke solver |
+| Trigger detection | 📋 Planned | Low | Detect when to invoke solver (see conditions below) |
 | ILP model | 📋 Planned | Low | Boolean vars, linear constraints |
 | MaxSAT alternative | 📋 Planned | Low | Alternative solver backend |
 | Bounded candidate window | 📋 Planned | Low | Control solver cost |
+
+**Solver Trigger Conditions (from PRD):**
+
+The planner MUST invoke the solver when any of these conditions are detected:
+
+| Trigger | Description |
+|---------|-------------|
+| Mutual Exclusivity (XOR) | Two+ candidates resolve overlapping diagnostics but conflict |
+| Prerequisite Dependencies | A candidate requires another to avoid introducing errors |
+| Greedy Stall | No candidate has positive score, but diagnostics remain |
+| Score Ambiguity | Top score within ε of next-best alternatives |
+| Batch Dominance | Multiple lower-ranked candidates together outperform best single |
+| Candidate Explosion | Pool exceeds threshold (e.g., 15-20 candidates) |
+
+These conditions are machine-detectable, not heuristic.
 
 ### Phase 6: Agent Integration
 
@@ -135,6 +193,18 @@ Generalize and publish the oracle-guided repair protocol as a standalone specifi
 | Wire format definition | 📋 Planned | Medium | JSON schema for repair plans |
 | Reference implementation | 📋 Planned | Medium | TypeScript impl as reference |
 | Protocol versioning | 📋 Planned | Low | Semantic versioning for protocol |
+| Default agent policy | 📋 Planned | Medium | Recommended agent behavior per disposition |
+
+**Default Agent Policy (from PRD):**
+
+The protocol should specify recommended agent behavior for each disposition:
+
+| Disposition | Recommended Action |
+|-------------|-------------------|
+| AutoFixable | Apply automatically |
+| AutoFixableHighRisk | Require explicit opt-in before applying |
+| NeedsJudgment | Surface to LLM/human with ranked options |
+| NoCandidate | Treat as semantic work item (manual fix required) |
 
 **Prerequisites:** Reproducible benchmarks demonstrating value.
 
@@ -160,6 +230,20 @@ Extend oracle-guided repair to other languages beyond TypeScript.
 5. Verification oracle
 
 The core planner, classifier, and output format remain shared.
+
+### Phase 9: Learning (Optional)
+
+Tune scoring weights from historical verification data. This is explicitly optional per the PRD.
+
+| Component | Status | Priority | Notes |
+|-----------|--------|----------|-------|
+| Verification result logging | 📋 Planned | Low | Capture outcomes for analysis |
+| Weight tuning pipeline | 📋 Planned | Low | Adjust α, K, risk penalties |
+| A/B testing framework | 📋 Planned | Low | Compare weight configurations |
+
+**Prerequisites:** Substantial benchmark corpus with ground truth outcomes.
+
+**Note:** Per PRD anti-goals, LLMs are not used as the primary ranking mechanism. Learning here means tuning numeric weights from empirical data, not ML-based ranking.
 
 ---
 
@@ -284,6 +368,7 @@ The following components from the old ts-repair (language compiler) should be re
 |--------|--------|-------|
 | Token reduction vs raw diagnostics | > 50% | Measured on benchmark set |
 | Iteration reduction | > 50% | Compile cycles to zero errors |
+| Compiler invocation reduction | > 50% | Agent re-runs of tsc (from PRD) |
 | Auto-fix rate | > 50% | Errors fixed without LLM reasoning |
 
 ### Secondary: Reliability
@@ -293,6 +378,7 @@ The following components from the old ts-repair (language compiler) should be re
 | Plans with no regressions | > 99% | No new errors introduced |
 | Verified fixes that work | 100% | By definition (oracle-verified) |
 | False positive rate | 0% | Never suggest fix that makes things worse |
+| Top-1 plan acceptance rate | > 80% | First suggested plan is accepted (from PRD) |
 
 ### Tertiary: Performance
 
@@ -326,12 +412,16 @@ The following components from the old ts-repair (language compiler) should be re
 |-------|--------|-------|
 | Phase 1 | ✅ Done | Prototype working |
 | Phase 2 | ✅ Done | Production implementation |
-| Phase 3 | Week 2-3 | Classification |
-| Phase 4 | Week 3-4 | Dependency metadata |
-| Phase 5 | Week 5+ | Solver (if needed) |
-| Phase 6 | Week 2+ | Agent integration (parallel) |
+| Phase 2.5 | ✅ Done | Budget constraints |
+| Phase 2.6 | Planned | CLI implementation |
+| Phase 2.7 | Planned | Scoring function (from PRD) |
+| Phase 3 | ✅ Done | Classification |
+| Phase 4 | Planned | Dependency metadata |
+| Phase 5 | Planned | Solver (if needed) |
+| Phase 6 | Planned | Agent integration (MCP) |
 | Phase 7 | After benchmarks | Protocol specification |
 | Phase 8 | After protocol | Multi-language support |
+| Phase 9 | Optional | Learning (weight tuning) |
 
 ---
 
@@ -373,4 +463,4 @@ Benchmark ts-repair against normal tsc + agent workflows to measure concrete sav
 ---
 
 *Last updated: January 17, 2026*
-*Phase 3 complete. NoCandidate split into NoGeneratedCandidate/NoVerifiedCandidate. Next: Budget constraints (2.5) or MCP integration (6)*
+*Roadmap aligned with PRD: added scoring function (2.7), solver triggers (5), agent policy (7), learning (9).*
