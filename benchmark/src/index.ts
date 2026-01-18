@@ -95,3 +95,15 @@ export {
   analyzeScaling,
   printScalingReport,
 } from './reporter.js';
+
+// Presets
+export type { FixturePreset, RecipeSize } from './presets.js';
+export {
+  FIXTURE_PRESETS,
+  FIXTURE_RECIPES,
+  REPO_PRESETS,
+  getFixturePreset,
+  getFixtureRecipe,
+  listFixtures,
+  listRepoPresets,
+} from './presets.js';

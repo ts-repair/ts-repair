@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+fixtures/*/node_modules/
+
+# Build output
+dist/
+
+# Results
+results/*.json
+results/*.csv
+results/*.md
+
+# Temporary files
+*.log
+.DS_Store
+
+# Lock files for fixtures (keep main benchmark lock file)
+fixtures/*/package-lock.json
+fixtures/*/*.lock

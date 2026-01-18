@@ -15,41 +15,22 @@ import type {
   ClaudeClient,
   Fix,
   MangleRecipe,
-  RepoPreset,
   Comparison,
 } from './types.js';
 import { DEFAULT_RECIPE, CASCADE_RECIPE, scaleRecipe, mangleProject, applyManglesToDisk, previewMangles } from './mangler.js';
+import {
+  FIXTURE_PRESETS,
+  FIXTURE_RECIPES,
+  REPO_PRESETS,
+  getFixturePreset,
+  getFixtureRecipe,
+  type RecipeSize,
+} from './presets.js';
 import { runVanillaBenchmark, estimateVanillaTokens } from './runner-vanilla.js';
 import { runTsRepairBenchmark, estimateTsRepairTokens } from './runner-tsrepair.js';
 import { compare, printConsoleReport, exportJson, exportCsv, exportMarkdown, analyzeScaling, printScalingReport } from './reporter.js';
 import { runTsc } from './tsc.js';
 import { countTokens } from './token-counter.js';
-
-/**
- * Repository presets for common TypeScript projects
- */
-const PRESETS: Record<string, RepoPreset> = {
-  excalidraw: {
-    repo: 'https://github.com/excalidraw/excalidraw',
-    tsconfig: 'tsconfig.json',
-    targetDir: 'packages/excalidraw/src',
-  },
-  tldraw: {
-    repo: 'https://github.com/tldraw/tldraw',
-    tsconfig: 'tsconfig.json',
-    targetDir: 'packages/tldraw/src',
-  },
-  payload: {
-    repo: 'https://github.com/payloadcms/payload',
-    tsconfig: 'tsconfig.json',
-    targetDir: 'packages/payload/src',
-  },
-  zod: {
-    repo: 'https://github.com/colinhacks/zod',
-    tsconfig: 'tsconfig.json',
-    targetDir: 'src',
-  },
-};
 
 /**
  * Real Claude client using Anthropic SDK
@@ -205,8 +186,10 @@ program
   .description('Run a single benchmark comparing vanilla vs ts-repair')
   .option('--repo <url>', 'Git repository URL to benchmark')
   .option('--local <path>', 'Local project path (alternative to --repo)')
-  .option('--preset <name>', 'Use a preset configuration')
-  .option('--errors <count>', 'Target error count', '25')
+  .option('--preset <name>', 'Use a remote repository preset')
+  .option('--fixture <name>', 'Use a local fixture (mini, tsx, zod)')
+  .option('--recipe-size <size>', 'Recipe size for fixture (small, medium, large)', 'small')
+  .option('--errors <count>', 'Target error count (overrides recipe-size)')
   .option('--seed <number>', 'Random seed for reproducibility', '42')
   .option('--recipe <spec>', 'Mangle recipe (e.g., "deleteImport:3,removeAsync:2")')
   .option('--cascade', 'Use cascade-focused recipe')
@@ -227,13 +210,27 @@ program
       let tsconfigPath = 'tsconfig.json';
       let targetDir: string | undefined;
       let projectName: string;
+      let isFixture = false;
 
       // Determine project source
-      if (options.preset) {
-        const preset = PRESETS[options.preset];
+      if (options.fixture) {
+        const fixture = getFixturePreset(options.fixture);
+        if (!fixture) {
+          console.error(chalk.red(`Unknown fixture: ${options.fixture}`));
+          console.error('Available fixtures:', Object.keys(FIXTURE_PRESETS).join(', '));
+          process.exit(1);
+        }
+        // Resolve fixture path relative to benchmark directory
+        const benchmarkDir = path.dirname(path.dirname(new URL(import.meta.url).pathname));
+        projectPath = path.resolve(benchmarkDir, fixture.path);
+        tsconfigPath = fixture.tsconfig;
+        projectName = options.fixture;
+        isFixture = true;
+      } else if (options.preset) {
+        const preset = REPO_PRESETS[options.preset];
         if (!preset) {
           console.error(chalk.red(`Unknown preset: ${options.preset}`));
-          console.error('Available presets:', Object.keys(PRESETS).join(', '));
+          console.error('Available presets:', Object.keys(REPO_PRESETS).join(', '));
           process.exit(1);
         }
         projectPath = await cloneRepo(preset.repo);
@@ -247,23 +244,37 @@ program
         projectPath = path.resolve(options.local);
         projectName = path.basename(projectPath);
       } else {
-        console.error(chalk.red('Error: Must specify --repo, --local, or --preset'));
+        console.error(chalk.red('Error: Must specify --repo, --local, --preset, or --fixture'));
         process.exit(1);
       }
 
       // Determine recipe
       let recipe: MangleRecipe;
+      let targetErrors: number | undefined;
+
       if (options.recipe) {
         recipe = parseRecipeString(options.recipe);
+      } else if (isFixture && options.fixture) {
+        // Use fixture-specific recipe
+        const recipeSize = options.recipeSize as RecipeSize;
+        const fixtureRecipe = getFixtureRecipe(options.fixture, recipeSize);
+        if (fixtureRecipe) {
+          recipe = fixtureRecipe;
+        } else {
+          console.warn(chalk.yellow(`No ${recipeSize} recipe for fixture ${options.fixture}, using default`));
+          recipe = DEFAULT_RECIPE;
+        }
       } else if (options.cascade) {
         recipe = CASCADE_RECIPE;
       } else {
         recipe = DEFAULT_RECIPE;
       }
 
-      // Scale recipe to target error count
-      const targetErrors = parseInt(options.errors, 10);
-      recipe = scaleRecipe(recipe, targetErrors);
+      // Scale recipe to target error count if specified
+      if (options.errors) {
+        targetErrors = parseInt(options.errors, 10);
+        recipe = scaleRecipe(recipe, targetErrors);
+      }
 
       const seed = parseInt(options.seed, 10);
       const maxRounds = parseInt(options.maxRounds, 10);
@@ -274,15 +285,20 @@ program
         tsconfigPath,
         targetDir,
         recipe,
-        targetErrorCount: targetErrors,
+        targetErrorCount: targetErrors ?? 0,
         maxRounds,
         seed,
       };
 
       console.log(chalk.bold('\nts-repair Benchmark'));
       console.log('─'.repeat(50));
-      console.log(`Project: ${chalk.cyan(projectName)}`);
-      console.log(`Target errors: ${chalk.cyan(targetErrors)}`);
+      console.log(`Project: ${chalk.cyan(projectName)}${isFixture ? chalk.dim(' (fixture)') : ''}`);
+      if (isFixture) {
+        console.log(`Recipe size: ${chalk.cyan(options.recipeSize)}`);
+      }
+      if (targetErrors) {
+        console.log(`Target errors: ${chalk.cyan(targetErrors)}`);
+      }
       console.log(`Seed: ${chalk.cyan(seed)}`);
       console.log(`Recipe: ${chalk.dim(JSON.stringify(recipe))}`);
       console.log('─'.repeat(50));
@@ -401,7 +417,7 @@ program
       let projectName: string;
 
       if (options.preset) {
-        const preset = PRESETS[options.preset];
+        const preset = REPO_PRESETS[options.preset];
         if (!preset) {
           console.error(chalk.red(`Unknown preset: ${options.preset}`));
           process.exit(1);
@@ -648,15 +664,40 @@ program
     }
   });
 
-// Presets command - list available presets
+// Fixtures command - list available local fixtures
+program
+  .command('fixtures')
+  .description('List available local fixtures')
+  .action(() => {
+    console.log(chalk.bold('\nLocal Fixtures:'));
+    console.log('─'.repeat(60));
+
+    for (const [name, fixture] of Object.entries(FIXTURE_PRESETS)) {
+      console.log(`  ${chalk.cyan(name.padEnd(10))} ${fixture.description}`);
+      console.log(`  ${''.padEnd(10)} ${chalk.dim(`~${fixture.linesOfCode.toLocaleString()} LoC`)}`);
+
+      // Show available recipe sizes
+      const recipes = FIXTURE_RECIPES[name];
+      if (recipes) {
+        const sizes = Object.keys(recipes).join(', ');
+        console.log(`  ${''.padEnd(10)} Recipes: ${chalk.dim(sizes)}`);
+      }
+      console.log();
+    }
+
+    console.log('Usage: ts-repair-bench run --fixture <name> --recipe-size small');
+    console.log('       ts-repair-bench run --fixture tsx --recipe-size medium --mock');
+  });
+
+// Presets command - list available remote repository presets
 program
   .command('presets')
-  .description('List available repository presets')
+  .description('List available remote repository presets')
   .action(() => {
-    console.log(chalk.bold('\nAvailable Presets:'));
-    console.log('─'.repeat(50));
+    console.log(chalk.bold('\nRemote Repository Presets:'));
+    console.log('─'.repeat(60));
 
-    for (const [name, preset] of Object.entries(PRESETS)) {
+    for (const [name, preset] of Object.entries(REPO_PRESETS)) {
       console.log(`  ${chalk.cyan(name.padEnd(15))} ${preset.repo}`);
       if (preset.targetDir) {
         console.log(`  ${''.padEnd(15)} Target: ${chalk.dim(preset.targetDir)}`);
@@ -664,6 +705,7 @@ program
     }
 
     console.log('\nUsage: ts-repair-bench run --preset <name> --errors 25');
+    console.log('\nFor local fixtures, use: ts-repair-bench fixtures');
   });
 
 // Preview command - show what mangles would be applied

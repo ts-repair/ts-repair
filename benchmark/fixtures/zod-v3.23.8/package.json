@@ -1,0 +1,13 @@
+{
+  "name": "zod-fixture",
+  "version": "3.23.8",
+  "description": "zod v3.23.8 fixture for ts-repair benchmark",
+  "license": "MIT",
+  "scripts": {
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.9",
+    "typescript": "^5.5.2"
+  }
+}
