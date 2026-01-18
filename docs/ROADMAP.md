@@ -292,7 +292,7 @@ Tune scoring weights from historical verification data. This is explicitly optio
 
 ---
 
-## Project Structure (Target)
+## Project Structure
 
 ```
 ts-repair/
@@ -302,76 +302,27 @@ ts-repair/
 │   ├── oracle/
 │   │   ├── vfs.ts            # Virtual file system
 │   │   ├── typescript.ts     # TypeScript integration
-│   │   ├── verify.ts         # Speculative verification
+│   │   ├── logger.ts         # Budget logging
 │   │   └── planner.ts        # Repair planning algorithm
 │   ├── classify/
-│   │   ├── disposition.ts    # Diagnostic classification
-│   │   └── risk.ts           # Risk scoring heuristics
-│   ├── solver/
-│   │   ├── trigger.ts        # Solver trigger detection
-│   │   └── ilp.ts            # ILP solver (optional)
+│   │   └── disposition.ts    # Diagnostic classification
 │   └── output/
 │       ├── format.ts         # Output formatting
 │       └── types.ts          # Type definitions
 ├── tests/
 │   ├── oracle/               # Oracle behavior tests
-│   ├── classify/             # Classification tests
-│   ├── integration/          # Real project tests
+│   ├── golden/               # Snapshot-based tests
+│   ├── output/               # Output formatting tests
 │   └── fixtures/             # Test TypeScript projects
 ├── docs/
 │   ├── PRD.md                # Product requirements
-│   └── ROADMAP.md            # This file
+│   ├── ROADMAP.md            # This file
+│   └── ts_repair_cli_specification.md  # CLI spec
 ├── package.json
 ├── tsconfig.json
 ├── CLAUDE.md                 # Development guidance
 └── README.md                 # User-facing docs
 ```
-
----
-
-## Code to Delete
-
-The following components from the old ts-repair (language compiler) should be removed:
-
-| Directory | Reason |
-|-----------|--------|
-| `src/lexer/` | No longer parsing custom language |
-| `src/parser/` | No longer parsing custom language |
-| `src/types/` | Using TypeScript's type checker |
-| `src/refinements/` | Not doing refinement types |
-| `src/canonical/` | Not transforming AST |
-| `src/codegen/` | Not generating code |
-| `src/ast-json/` | Not using custom AST format |
-| `src/diagnostics/` | Replacing with new repair system |
-| `tests/lexer/` | Old lexer tests |
-| `tests/parser/` | Old parser tests |
-| `tests/types/` | Old type checker tests |
-| `tests/codegen/` | Old codegen tests |
-| `tests/refinements/` | Old refinement tests |
-| `tests/golden/` | Old golden tests |
-| `tests/evaluation/` | Old evaluation suite |
-| `docs/SPEC.md` | Language spec (no longer applicable) |
-| `docs/REPAIRS.md` | Old repair system |
-| `docs/EFFECTS.md` | Effect tracking (no longer applicable) |
-| `docs/REFINEMENTS.md` | Refinement types (no longer applicable) |
-| `docs/CODEGEN.md` | Code generation (no longer applicable) |
-| `docs/AST-JSON.md` | AST format (no longer applicable) |
-| `docs/CLI.md` | Old CLI (will be rewritten) |
-
-**Keep:**
-- `.mise.toml` — Toolchain config
-- `package.json` — Update dependencies
-- `tsconfig.json` — TypeScript config
-- `.gitignore` — Git ignore rules
-
----
-
-## Migration Strategy
-
-1. **Create fresh `src/` structure** with new oracle implementation
-2. **Keep old code temporarily** in `src-old/` for reference
-3. **Migrate tests incrementally** as new features are built
-4. **Delete old code** once new implementation is stable
 
 ---
 
@@ -470,38 +421,9 @@ Benchmark ts-repair against normal tsc + agent workflows to measure concrete sav
 
 ## Known Issues
 
-Issues discovered during ad-hoc benchmarking (January 2026):
-
-### ~~Bug: AutoFixable items not committed to steps~~ ✅ Fixed
-
-**Status:** Fixed (January 18, 2026)
-**Location:** `src/oracle/planner.ts`
-
-The original issue was that `classifyRemaining()` used different scoring criteria than the main planning loop, which could theoretically lead to a diagnostic being classified as `AutoFixable` but not included in `steps`.
-
-**Root cause:** Classification used weighted scoring (`score > 0`) while planning (in delta mode) used `delta > 0`. This inconsistency has been fixed by making classification use the same scoring strategy as the planning loop.
-
-**Resolution:** Classification now respects `opts.scoringStrategy` and uses the same criteria as planning.
-
-### ~~Issue: Multi-file import chains not fully verified~~ ✅ Not Reproducible
-
-**Status:** Could not reproduce (January 18, 2026)
-**Location:** `src/oracle/verify.ts`
-
-Investigation found that multi-file imports work correctly:
-- Each file's error count is independent
-- Fixing file A's import reduces total errors by the count in file A
-- Fixing file B's import in the next iteration reduces remaining errors
-- Both files get fixed through iterative planning
-
-The original description suggested `delta=0` when adding an import to one file, but testing shows each file's fix has `delta > 0` because errors in different files don't cancel each other out.
-
-**Resolution:** No fix needed. If this issue recurs with a specific reproduction case, please document the exact project structure.
-
 ### Observation: Re-export imports vs direct imports
 
 **Severity:** Low
-**Location:** `src/oracle/typescript.ts`
 
 TypeScript's code fix suggestions sometimes prefer re-export paths (e.g., `import { X } from '../index.js'`) over direct paths (e.g., `import { X } from '../errors/X.js'`). Both are correct but direct imports are generally preferred for clarity and tree-shaking.
 
