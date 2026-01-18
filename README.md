@@ -62,7 +62,10 @@ REMAINING (require judgment):
 ### CLI
 
 ```bash
-# Install
+# Install (Bun)
+bun add -g ts-repair
+
+# Install (npm)
 npm install -g ts-repair
 
 # Get a repair plan
@@ -80,6 +83,18 @@ ts-repair repair ./tsconfig.json --json
 ts-repair integrates with AI coding assistants via MCP.
 
 **Claude Code** — add to `~/.claude/settings.json`:
+```json
+{
+  "mcpServers": {
+    "ts-repair": {
+      "command": "bunx",
+      "args": ["ts-repair", "mcp-server"]
+    }
+  }
+}
+```
+
+Or with npx:
 ```json
 {
   "mcpServers": {
