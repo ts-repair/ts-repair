@@ -123,6 +123,17 @@ export interface RepairRequest {
 
   /** Include high-risk fixes in the plan (default: false) */
   includeHighRisk?: boolean;
+
+  /** Scoring weights for candidate ranking */
+  scoreWeights?: {
+    introducedMultiplier?: number;
+    editSizeAlpha?: number;
+    riskPenalty?: {
+      low?: number;
+      medium?: number;
+      high?: number;
+    };
+  };
 }
 
 export interface RepairResponse {

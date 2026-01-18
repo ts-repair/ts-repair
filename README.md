@@ -217,6 +217,11 @@ for (const remaining of plan.remaining) {
 }
 ```
 
+### Configuration
+
+ts-repair exposes tunable budgets, risk policy, and scoring weights for candidate ranking.
+See [docs/CONFIG.md](docs/CONFIG.md) for the full list of options and defaults.
+
 ### MCP Tool (for Claude Code, etc.)
 
 ts-repair exposes an MCP tool that agents can call directly:
@@ -309,6 +314,7 @@ mise run check
 ## Documentation
 
 * [Architecture](docs/ARCHITECTURE.md) — System design and components
+* [Configuration](docs/CONFIG.md) — Runtime tuning and defaults
 * [Product Requirements](docs/PRD.md) — Full specification and design rationale
 * [Roadmap](docs/ROADMAP.md) — Implementation phases and status
 * [CLAUDE.md](CLAUDE.md) — Development guidance
