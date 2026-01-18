@@ -203,7 +203,7 @@ Not all verified fixes are equal. Risk categories (low to high):
 | Topic | File | Description |
 |-------|------|-------------|
 | **Architecture** | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design and components |
-| **CLI Specification** | [docs/ts_repair_cli_specification.md](docs/ts_repair_cli_specification.md) | Command-line interface spec |
+| **CLI Reference** | [docs/CLI.md](docs/CLI.md) | Command-line interface reference |
 | **Product Requirements** | [docs/PRD.md](docs/PRD.md) | Full specification |
 | **Roadmap** | [docs/ROADMAP.md](docs/ROADMAP.md) | Implementation status |
 

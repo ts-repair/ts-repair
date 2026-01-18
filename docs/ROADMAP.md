@@ -64,7 +64,7 @@ Verification budget as a first-class constraint in the Planner + Verification la
 
 ### Phase 2.6: CLI Implementation ✅ Complete
 
-Full CLI implementation as specified in [docs/ts_repair_cli_specification.md](ts_repair_cli_specification.md).
+Full CLI implementation as specified in [docs/CLI.md](CLI.md).
 
 | Component | Status | Priority | Notes |
 |-----------|--------|----------|-------|
@@ -330,7 +330,7 @@ ts-repair/
 ├── docs/
 │   ├── PRD.md                # Product requirements
 │   ├── ROADMAP.md            # This file
-│   └── ts_repair_cli_specification.md  # CLI spec
+│   └── CLI.md               # CLI reference
 ├── package.json
 ├── tsconfig.json
 ├── CLAUDE.md                 # Development guidance

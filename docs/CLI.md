@@ -1,6 +1,6 @@
-# ts-repair CLI Specification
+# CLI Reference
 
-This document defines the command-line interface (CLI) surface for **ts-repair**, an oracle-guided TypeScript repair engine. The CLI is designed to be:
+This document defines the command-line interface for ts-repair. The CLI is designed to be:
 
 - **Drop-in compatible** with existing `tsc` workflows
 - **Deterministic and scriptable** for agents and CI

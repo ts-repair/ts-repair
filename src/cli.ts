@@ -15,7 +15,7 @@
  *   ts-repair preview             Preview budget impact without verification (new)
  *   ts-repair mcp-server          Run MCP server for agent integration
  *
- * See docs/ts_repair_cli_specification.md for full specification.
+ * See docs/CLI.md for full specification.
  */
 
 import { repair, createBudgetLogger } from "./oracle/planner.js";
