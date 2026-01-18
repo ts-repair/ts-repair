@@ -1,6 +1,6 @@
 {
   "name": "ts-repair",
-  "version": "0.2.0",
+  "version": "0.0.1",
   "description": "Oracle-guided TypeScript repair engine. Turns compiler diagnostics into verified repair plans for agents.",
   "type": "module",
   "main": "dist/index.js",
