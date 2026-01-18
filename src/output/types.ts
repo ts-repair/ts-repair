@@ -1,8 +1,8 @@
 /**
- * Core type definitions for Clank repair engine
+ * Core type definitions for ts-repair engine
  */
 
-// Type definitions for Clank repair engine
+// Type definitions for ts-repair engine
 
 // ============================================================================
 // File Changes
