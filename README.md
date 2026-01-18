@@ -19,9 +19,13 @@ ts-repair asks the TypeScript compiler a better question:
 
 > *"If I applied this fix, would it actually help?"*
 
-It speculatively applies every candidate fix in-memory, re-runs the type checker, and only surfaces fixes that **provably reduce errors**. Agents receive a verified repair plan they can apply directly—no guessing, no wasted iterations.
+The term "oracle-guided" means exactly this: **the TypeScript compiler is the oracle**. Not an LLM, not a heuristic, not a probabilistic model—the actual type checker that will judge your code.
 
-**Early stage:** ts-repair is a working prototype. Rigorous benchmarks comparing token usage with and without ts-repair are coming soon. Early testing suggests significant savings on projects with multiple fixable errors.
+ts-repair speculatively applies candidate fixes in-memory and re-runs the type checker after each one. A fix is "verified" when the compiler confirms it reduces total diagnostics. Fixes that introduce new errors are rejected. Agents receive only what the compiler has validated.
+
+Because candidate fixes can interact—one fix may enable or invalidate another—ts-repair applies them in an order that monotonically reduces total errors. Each committed step is verified to make progress before the next is considered.
+
+**Early stage:** ts-repair is a working prototype. Early testing on real-world codebases (React frontends, Node.js backends, monorepo libraries) shows it eliminates the compile → reason → recompile loop for mechanical fixes. Rigorous benchmarks with token and iteration measurements are coming soon.
 
 ## Quick Example
 
@@ -118,7 +122,7 @@ The key insight: TypeScript's incremental type checker is fast. Speculatively te
 
 ### Diagnostic Classification
 
-After planning, each remaining diagnostic is classified:
+Classification is a core product feature, not an implementation detail. Every diagnostic in the output carries a machine-readable disposition that tells agents whether they're looking at mechanical work or a judgment call:
 
 | Disposition | Meaning | Agent Action |
 |-------------|---------|--------------|
@@ -127,7 +131,7 @@ After planning, each remaining diagnostic is classified:
 | **NeedsJudgment** | Multiple valid fixes | Let the agent decide |
 | **NoCandidate** | No fix helps | Treat as semantic work |
 
-This classification is part of the protocol—agents know exactly what to do with each diagnostic.
+This distinction is part of the protocol. Agents can implement deterministic behavior: apply mechanical fixes without reasoning, spend tokens only on diagnostics that require judgment.
 
 ---
 
@@ -150,6 +154,18 @@ Some errors have no auto-fix or multiple valid options:
 - Missing returns (what should it return?)
 
 These are surfaced to the agent with context about what was tried.
+
+---
+
+## Non-Goals
+
+ts-repair is deliberately limited:
+
+- **Does not infer business logic.** If the compiler can't verify a fix, ts-repair won't suggest it.
+- **Does not choose between equally valid semantic alternatives.** When multiple fixes are type-correct, ts-repair surfaces them for the agent to decide.
+- **Does not replace TypeScript's type system.** It uses the compiler as-is; it doesn't invent new checks or relax existing ones.
+
+The purpose is to eliminate mechanical compiler-guided work so agents spend tokens only on meaningful reasoning.
 
 ---
 
