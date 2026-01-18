@@ -24,6 +24,7 @@ import {
   REPO_PRESETS,
   getFixturePreset,
   getFixtureRecipe,
+  hasRecipes,
   type RecipeSize,
 } from './presets.js';
 import { runVanillaBenchmark, estimateVanillaTokens } from './runner-vanilla.js';
@@ -129,15 +130,15 @@ function parseFixes(content: string): Fix[] {
 /**
  * Clone a repository to a temp directory
  */
-async function cloneRepo(repoUrl: string, branch?: string): Promise<string> {
+async function cloneRepo(repoUrl: string, tagOrBranch?: string): Promise<string> {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ts-repair-bench-'));
   const git = simpleGit();
 
-  console.log(chalk.dim(`Cloning ${repoUrl}...`));
-
-  if (branch) {
-    await git.clone(repoUrl, tempDir, ['--branch', branch, '--depth', '1']);
+  if (tagOrBranch) {
+    console.log(chalk.dim(`Cloning ${repoUrl} @ ${tagOrBranch}...`));
+    await git.clone(repoUrl, tempDir, ['--branch', tagOrBranch, '--depth', '1']);
   } else {
+    console.log(chalk.dim(`Cloning ${repoUrl}...`));
     await git.clone(repoUrl, tempDir, ['--depth', '1']);
   }
 
@@ -233,10 +234,14 @@ program
           console.error('Available presets:', Object.keys(REPO_PRESETS).join(', '));
           process.exit(1);
         }
-        projectPath = await cloneRepo(preset.repo);
+        projectPath = await cloneRepo(preset.repo, preset.tag);
         tsconfigPath = preset.tsconfig;
         targetDir = preset.targetDir;
         projectName = options.preset;
+        // Presets with recipes (tsx, zod) behave like fixtures
+        if (hasRecipes(options.preset)) {
+          isFixture = true;
+        }
       } else if (options.repo) {
         projectPath = await cloneRepo(options.repo);
         projectName = path.basename(options.repo, '.git');
@@ -251,17 +256,18 @@ program
       // Determine recipe
       let recipe: MangleRecipe;
       let targetErrors: number | undefined;
+      const presetOrFixtureName = options.fixture || options.preset;
 
       if (options.recipe) {
         recipe = parseRecipeString(options.recipe);
-      } else if (isFixture && options.fixture) {
-        // Use fixture-specific recipe
+      } else if (isFixture && presetOrFixtureName) {
+        // Use fixture-specific recipe (works for both local fixtures and presets with recipes)
         const recipeSize = options.recipeSize as RecipeSize;
-        const fixtureRecipe = getFixtureRecipe(options.fixture, recipeSize);
+        const fixtureRecipe = getFixtureRecipe(presetOrFixtureName, recipeSize);
         if (fixtureRecipe) {
           recipe = fixtureRecipe;
         } else {
-          console.warn(chalk.yellow(`No ${recipeSize} recipe for fixture ${options.fixture}, using default`));
+          console.warn(chalk.yellow(`No ${recipeSize} recipe for ${presetOrFixtureName}, using default`));
           recipe = DEFAULT_RECIPE;
         }
       } else if (options.cascade) {
@@ -669,7 +675,7 @@ program
   .command('fixtures')
   .description('List available local fixtures')
   .action(() => {
-    console.log(chalk.bold('\nLocal Fixtures:'));
+    console.log(chalk.bold('\nLocal Fixtures (vendored):'));
     console.log('─'.repeat(60));
 
     for (const [name, fixture] of Object.entries(FIXTURE_PRESETS)) {
@@ -686,7 +692,7 @@ program
     }
 
     console.log('Usage: ts-repair-bench run --fixture <name> --recipe-size small');
-    console.log('       ts-repair-bench run --fixture tsx --recipe-size medium --mock');
+    console.log('\nFor tsx/zod and other remote fixtures, use: ts-repair-bench presets');
   });
 
 // Presets command - list available remote repository presets
@@ -694,18 +700,44 @@ program
   .command('presets')
   .description('List available remote repository presets')
   .action(() => {
-    console.log(chalk.bold('\nRemote Repository Presets:'));
+    console.log(chalk.bold('\nRemote Repository Presets (cloned on-demand):'));
     console.log('─'.repeat(60));
 
+    // Show deterministic fixtures first (tsx, zod)
+    console.log(chalk.bold('\nDeterministic fixtures with recipes:'));
     for (const [name, preset] of Object.entries(REPO_PRESETS)) {
-      console.log(`  ${chalk.cyan(name.padEnd(15))} ${preset.repo}`);
-      if (preset.targetDir) {
-        console.log(`  ${''.padEnd(15)} Target: ${chalk.dim(preset.targetDir)}`);
+      if (hasRecipes(name)) {
+        console.log(`  ${chalk.cyan(name.padEnd(12))} ${preset.description || preset.repo}`);
+        if (preset.tag) {
+          console.log(`  ${''.padEnd(12)} ${chalk.dim(`Tag: ${preset.tag}`)}`);
+        }
+        if (preset.linesOfCode) {
+          console.log(`  ${''.padEnd(12)} ${chalk.dim(`~${preset.linesOfCode.toLocaleString()} LoC`)}`);
+        }
+        const recipes = FIXTURE_RECIPES[name];
+        if (recipes) {
+          const sizes = Object.keys(recipes).join(', ');
+          console.log(`  ${''.padEnd(12)} Recipes: ${chalk.dim(sizes)}`);
+        }
+        console.log();
       }
     }
 
-    console.log('\nUsage: ts-repair-bench run --preset <name> --errors 25');
-    console.log('\nFor local fixtures, use: ts-repair-bench fixtures');
+    // Show other presets
+    console.log(chalk.bold('Other repositories (latest main):'));
+    for (const [name, preset] of Object.entries(REPO_PRESETS)) {
+      if (!hasRecipes(name)) {
+        console.log(`  ${chalk.cyan(name.padEnd(12))} ${preset.description || preset.repo}`);
+        if (preset.targetDir) {
+          console.log(`  ${''.padEnd(12)} Target: ${chalk.dim(preset.targetDir)}`);
+        }
+      }
+    }
+
+    console.log('\nUsage:');
+    console.log('  ts-repair-bench run --preset tsx --recipe-size small --mock');
+    console.log('  ts-repair-bench run --preset zod --recipe-size medium --mock');
+    console.log('  ts-repair-bench run --preset excalidraw --errors 25');
   });
 
 // Preview command - show what mangles would be applied

@@ -103,7 +103,9 @@ export {
   FIXTURE_RECIPES,
   REPO_PRESETS,
   getFixturePreset,
+  getRepoPreset,
   getFixtureRecipe,
   listFixtures,
   listRepoPresets,
+  hasRecipes,
 } from './presets.js';

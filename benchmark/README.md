@@ -60,10 +60,28 @@ npm run dev -- preview --local ./my-project --errors 25
 npm run dev -- analyze results/*.json --output analysis.md
 ```
 
-### List Presets
+### List Available Fixtures
 
 ```bash
+# Local fixtures (vendored)
+npm run dev -- fixtures
+
+# Remote presets (cloned on-demand)
 npm run dev -- presets
+```
+
+### Using Fixtures with Recipes
+
+tsx and zod are deterministic fixtures with pinned versions and tuned recipes:
+
+```bash
+# Use tsx v4.19.2 with small recipe (~30 errors)
+npm run dev -- run --preset tsx --recipe-size small --mock
+
+# Use zod v3.23.8 with medium recipe (~60 errors)
+npm run dev -- run --preset zod --recipe-size medium --mock
+
+# Recipe sizes: small, medium, large
 ```
 
 ## Mangle Types
@@ -117,6 +135,50 @@ Results are exported in multiple formats:
 ## Environment Variables
 
 - `ANTHROPIC_API_KEY` - Required for real Claude API calls (use `--mock` to skip)
+
+## Mock Client
+
+The `--mock` flag runs benchmarks without making actual Claude API calls. This is useful for:
+
+- **Development** - Testing harness changes without incurring API costs
+- **CI/CD** - Running integration tests in automated pipelines
+- **Validation** - Verifying mangle and token counting logic
+
+**Important Limitations:**
+
+- Mock results do not reflect actual Claude fix behavior
+- Token counts are estimated but accurate (uses tiktoken)
+- Success rates and round counts are simulated
+- **Never publish or rely on mock results for real comparisons**
+
+For accurate token efficiency measurements, always use real Claude API calls:
+
+```bash
+export ANTHROPIC_API_KEY=your-key
+npm run dev -- run --preset tsx --recipe-size small
+```
+
+## Recipe Scaling Heuristics
+
+The benchmark uses **cascade multipliers** to estimate error counts from a mangle recipe. These are **empirical estimates**, not guaranteed values:
+
+| Mangle Type | Multiplier | Meaning |
+|------------|------------|---------|
+| `deleteImport` | 5x | Deleting one import typically causes ~5 errors |
+| `deleteInterfaceProperty` | 4x | Removing a property causes ~4 errors |
+| `removeAsyncModifier` | 3x | Removing `async` causes ~3 errors |
+| `widenToUnknown` | 2x | Widening types causes ~2 errors |
+| `deleteTypeGuard` | 2x | Breaking type guards causes ~2 errors |
+| Others | 1x | Most localized changes cause ~1 error each |
+
+**Accuracy Caveats:**
+
+1. Actual cascade depends on codebase structure
+2. Small codebases may have fewer cascade opportunities
+3. Type-heavy code (like zod) may cascade differently than UI code
+4. The `scaleRecipe()` function uses these multipliers to target error counts
+
+When targeting a specific error count with `--errors N`, the recipe is scaled proportionally. If results differ significantly from targets, adjust the recipe manually.
 
 ## Example Output
 
@@ -182,9 +244,25 @@ benchmark/
 │   ├── runner-tsrepair.ts # ts-repair + Claude loop
 │   ├── token-counter.ts   # tiktoken-based counting
 │   ├── reporter.ts        # Results comparison & output
+│   ├── presets.ts         # Fixture and recipe configurations
 │   ├── cli.ts             # Command-line interface
 │   └── index.ts           # Public exports
-├── fixtures/              # Test projects
-│   └── mini-ts-app/       # ~500 LoC TypeScript app
+├── fixtures/              # Local test projects
+│   └── mini-ts-app/       # ~500 LoC synthetic TypeScript app
+├── tests/                 # Test suite
+│   ├── mangler.test.ts    # Mangler unit tests
+│   ├── token-counter.test.ts
+│   ├── tsc.test.ts
+│   ├── presets.test.ts
+│   └── golden/            # Determinism golden tests
 └── results/               # Benchmark output
 ```
+
+### Remote Presets
+
+tsx and zod are cloned on-demand from GitHub with pinned version tags:
+
+- **tsx v4.19.2** - TypeScript execute (~3.5k LoC)
+- **zod v3.23.8** - Schema validation (~6.3k LoC)
+
+This keeps the repository lightweight while providing reproducible benchmarks.
