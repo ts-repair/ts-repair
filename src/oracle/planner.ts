@@ -31,7 +31,8 @@ import { createBudgetLogger, createNoopLogger, type BudgetLogger } from "./logge
 export function assessRisk(fixName: string): "low" | "medium" | "high" {
   // Low risk - almost always correct
   const lowRisk = [
-    "fixMissingImport",
+    "import", // TypeScript's actual name for "Add import from ..."
+    "fixMissingImport", // Keep for compatibility
     "addMissingAsync",
     "addMissingAwait",
     "fixAwaitInSyncFunction",

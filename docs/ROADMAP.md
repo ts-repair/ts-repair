@@ -453,6 +453,44 @@ Benchmark ts-repair against normal tsc + agent workflows to measure concrete sav
 
 ---
 
+## Known Issues
+
+Issues discovered during ad-hoc benchmarking (January 2026):
+
+### Bug: AutoFixable items not committed to steps
+
+**Severity:** High
+**Location:** `src/oracle/planner.ts`
+
+The planner correctly classifies some diagnostics as `AutoFixable` but fails to include them in the `steps` array of the repair plan. This means `apply --auto` has nothing to apply even when AutoFixable repairs exist.
+
+**Reproduction:** Run `ts-repair plan` on a project with `await` expressions in non-async functions. The plan will show `disposition: "AutoFixable"` but `steps: []`.
+
+**Expected:** AutoFixable items should be committed to steps during planning, or the classification should happen after step generation.
+
+### Issue: Multi-file import chains not fully verified
+
+**Severity:** Medium
+**Location:** `src/oracle/verify.ts`
+
+When a missing import (e.g., `HTTPError`) is used in multiple files, adding the import to one file doesn't reduce the total error count because the same symbol is still missing elsewhere. The verification correctly returns delta=0, but this causes the fix to be marked as `NoVerifiedCandidate` when it's actually a correct partial fix.
+
+**Possible solutions:**
+1. Group related diagnostics across files before verification
+2. Allow fixes with delta=0 if they resolve the specific diagnostic
+3. Multi-file batched verification
+
+### Observation: Re-export imports vs direct imports
+
+**Severity:** Low
+**Location:** `src/oracle/typescript.ts`
+
+TypeScript's code fix suggestions sometimes prefer re-export paths (e.g., `import { X } from '../index.js'`) over direct paths (e.g., `import { X } from '../errors/X.js'`). Both are correct but direct imports are generally preferred for clarity and tree-shaking.
+
+**Note:** This is TypeScript's behavior, not a ts-repair bug. Could potentially be addressed by ranking fixes that use shorter/direct import paths higher.
+
+---
+
 ## Open Questions
 
 1. **Incremental checking** — Can we use TypeScript's incremental APIs to speed up verification?
@@ -462,5 +500,6 @@ Benchmark ts-repair against normal tsc + agent workflows to measure concrete sav
 
 ---
 
-*Last updated: January 17, 2026*
+*Last updated: January 18, 2026*
 *Roadmap aligned with PRD: added scoring function (2.7), solver triggers (5), agent policy (7), learning (9).*
+*Added Known Issues section from ad-hoc benchmark findings.*
