@@ -45,6 +45,12 @@ export interface ClassifiedDiagnostic extends DiagnosticRef {
 // Verified Fixes
 // ============================================================================
 
+export interface FixDependencies {
+  conflictsWith: string[];
+  requires: string[];
+  exclusiveGroup?: string;
+}
+
 export interface VerifiedFix {
   id: string;
 
@@ -65,6 +71,9 @@ export interface VerifiedFix {
 
   // Risk assessment
   risk: "low" | "medium" | "high";
+
+  // Dependency metadata
+  dependencies: FixDependencies;
 }
 
 // ============================================================================
@@ -89,6 +98,9 @@ export interface RepairPlan {
 
   /** Diagnostics that remain after applying all steps */
   remaining: ClassifiedDiagnostic[];
+
+  /** Compatible fix batches derived from dependencies */
+  batches: string[][];
 
   /** Summary statistics */
   summary: {

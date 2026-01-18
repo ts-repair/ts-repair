@@ -12,6 +12,7 @@ import {
   pruneCandidates,
   assessRisk,
   createBudgetLogger,
+  deriveDependencies,
   type PlanOptions,
 } from "../../src/oracle/planner.js";
 import path from "path";
@@ -30,6 +31,7 @@ describe("plan", () => {
       expect(result.summary.finalErrors).toBe(0);
       expect(result.summary.fixedCount).toBe(0);
       expect(result.summary.remainingCount).toBe(0);
+      expect(Array.isArray(result.batches)).toBe(true);
     });
 
     it("finds and applies fixes for async/await error", () => {
@@ -99,6 +101,9 @@ describe("plan", () => {
         expect(typeof step.delta).toBe("number");
 
         expect(["low", "medium", "high"]).toContain(step.risk);
+        expect(step.dependencies).toBeDefined();
+        expect(Array.isArray(step.dependencies.conflictsWith)).toBe(true);
+        expect(Array.isArray(step.dependencies.requires)).toBe(true);
       }
     });
 
@@ -324,6 +329,289 @@ describe("plan", () => {
           lastStep.errorsAfter
         );
       }
+    });
+  });
+
+  describe("dependency metadata", () => {
+    it("derives exclusive group for fixes targeting same diagnostic", () => {
+      const fixes = [
+        {
+          id: "fix-0",
+          diagnostic: {
+            file: "file.ts",
+            code: 100,
+            message: "Missing",
+            line: 1,
+            column: 1,
+            start: 10,
+            length: 1,
+          },
+          fixName: "fixMissingImport",
+          fixDescription: "Add import",
+          changes: [{ file: "file.ts", start: 0, end: 0, newText: "import" }],
+          errorsBefore: 2,
+          errorsAfter: 1,
+          delta: 1,
+          risk: "low",
+          dependencies: { conflictsWith: [], requires: [] },
+        },
+        {
+          id: "fix-1",
+          diagnostic: {
+            file: "file.ts",
+            code: 100,
+            message: "Missing",
+            line: 1,
+            column: 1,
+            start: 10,
+            length: 1,
+          },
+          fixName: "fixMissingImport",
+          fixDescription: "Add import alt",
+          changes: [{ file: "file.ts", start: 0, end: 0, newText: "import2" }],
+          errorsBefore: 2,
+          errorsAfter: 1,
+          delta: 1,
+          risk: "low",
+          dependencies: { conflictsWith: [], requires: [] },
+        },
+      ];
+
+      const batches = deriveDependencies(fixes);
+
+      expect(fixes[0].dependencies.exclusiveGroup).toBeDefined();
+      expect(fixes[0].dependencies.exclusiveGroup).toBe(
+        fixes[1].dependencies.exclusiveGroup
+      );
+      expect(batches.length).toBeGreaterThan(0);
+    });
+
+    it("marks conflicts when edits overlap", () => {
+      const fixes = [
+        {
+          id: "fix-0",
+          diagnostic: {
+            file: "file.ts",
+            code: 200,
+            message: "Overlap",
+            line: 1,
+            column: 1,
+            start: 5,
+            length: 2,
+          },
+          fixName: "fixSpelling",
+          fixDescription: "Fix spelling",
+          changes: [{ file: "file.ts", start: 5, end: 7, newText: "ok" }],
+          errorsBefore: 2,
+          errorsAfter: 1,
+          delta: 1,
+          risk: "medium",
+          dependencies: { conflictsWith: [], requires: [] },
+        },
+        {
+          id: "fix-1",
+          diagnostic: {
+            file: "file.ts",
+            code: 201,
+            message: "Overlap",
+            line: 2,
+            column: 1,
+            start: 6,
+            length: 1,
+          },
+          fixName: "fixMissingMember",
+          fixDescription: "Add member",
+          changes: [{ file: "file.ts", start: 6, end: 6, newText: "a" }],
+          errorsBefore: 2,
+          errorsAfter: 1,
+          delta: 1,
+          risk: "medium",
+          dependencies: { conflictsWith: [], requires: [] },
+        },
+      ];
+
+      deriveDependencies(fixes);
+
+      expect(fixes[0].dependencies.conflictsWith).toContain("fix-1");
+      expect(fixes[1].dependencies.conflictsWith).toContain("fix-0");
+    });
+
+    it("marks requires when insertion overlaps another edit", () => {
+      const fixes = [
+        {
+          id: "fix-0",
+          diagnostic: {
+            file: "file.ts",
+            code: 300,
+            message: "Insert",
+            line: 1,
+            column: 1,
+            start: 0,
+            length: 0,
+          },
+          fixName: "fixMissingImport",
+          fixDescription: "Add import",
+          changes: [{ file: "file.ts", start: 0, end: 0, newText: "import" }],
+          errorsBefore: 2,
+          errorsAfter: 1,
+          delta: 1,
+          risk: "low",
+          dependencies: { conflictsWith: [], requires: [] },
+        },
+        {
+          id: "fix-1",
+          diagnostic: {
+            file: "file.ts",
+            code: 301,
+            message: "Insert",
+            line: 2,
+            column: 1,
+            start: 0,
+            length: 0,
+          },
+          fixName: "fixUnusedIdentifier",
+          fixDescription: "Remove",
+          changes: [{ file: "file.ts", start: 0, end: 6, newText: "" }],
+          errorsBefore: 2,
+          errorsAfter: 1,
+          delta: 1,
+          risk: "low",
+          dependencies: { conflictsWith: [], requires: [] },
+        },
+      ];
+
+      deriveDependencies(fixes);
+
+      expect(fixes[1].dependencies.requires).toContain("fix-0");
+    });
+
+    it("batches fixes respecting conflicts", () => {
+      const fixes = [
+        {
+          id: "fix-0",
+          diagnostic: {
+            file: "file.ts",
+            code: 400,
+            message: "Conflict",
+            line: 1,
+            column: 1,
+            start: 0,
+            length: 1,
+          },
+          fixName: "fixSpelling",
+          fixDescription: "Fix",
+          changes: [{ file: "file.ts", start: 0, end: 1, newText: "a" }],
+          errorsBefore: 2,
+          errorsAfter: 1,
+          delta: 1,
+          risk: "medium",
+          dependencies: { conflictsWith: [], requires: [] },
+        },
+        {
+          id: "fix-1",
+          diagnostic: {
+            file: "file.ts",
+            code: 401,
+            message: "Conflict",
+            line: 1,
+            column: 2,
+            start: 0,
+            length: 1,
+          },
+          fixName: "fixSpelling",
+          fixDescription: "Fix",
+          changes: [{ file: "file.ts", start: 0, end: 1, newText: "b" }],
+          errorsBefore: 2,
+          errorsAfter: 1,
+          delta: 1,
+          risk: "medium",
+          dependencies: { conflictsWith: [], requires: [] },
+        },
+        {
+          id: "fix-2",
+          diagnostic: {
+            file: "file.ts",
+            code: 402,
+            message: "No conflict",
+            line: 2,
+            column: 1,
+            start: 5,
+            length: 1,
+          },
+          fixName: "fixMissingImport",
+          fixDescription: "Add import",
+          changes: [{ file: "file.ts", start: 10, end: 10, newText: "import" }],
+          errorsBefore: 2,
+          errorsAfter: 1,
+          delta: 1,
+          risk: "low",
+          dependencies: { conflictsWith: [], requires: [] },
+        },
+      ];
+
+      const batches = deriveDependencies(fixes);
+
+      expect(batches.length).toBeGreaterThan(1);
+      expect(batches.flat()).toContain("fix-0");
+      expect(batches.flat()).toContain("fix-1");
+      expect(batches.flat()).toContain("fix-2");
+    });
+
+    it("respects prerequisites in batching", () => {
+      const fixes = [
+        {
+          id: "fix-0",
+          diagnostic: {
+            file: "file.ts",
+            code: 500,
+            message: "Insert",
+            line: 1,
+            column: 1,
+            start: 0,
+            length: 0,
+          },
+          fixName: "fixMissingImport",
+          fixDescription: "Add import",
+          changes: [{ file: "file.ts", start: 0, end: 0, newText: "import" }],
+          errorsBefore: 2,
+          errorsAfter: 1,
+          delta: 1,
+          risk: "low",
+          dependencies: { conflictsWith: [], requires: [] },
+        },
+        {
+          id: "fix-1",
+          diagnostic: {
+            file: "file.ts",
+            code: 501,
+            message: "Insert",
+            line: 2,
+            column: 1,
+            start: 0,
+            length: 0,
+          },
+          fixName: "fixUnusedIdentifier",
+          fixDescription: "Remove",
+          changes: [{ file: "file.ts", start: 0, end: 6, newText: "" }],
+          errorsBefore: 2,
+          errorsAfter: 1,
+          delta: 1,
+          risk: "low",
+          dependencies: { conflictsWith: [], requires: [] },
+        },
+      ];
+
+      const batches = deriveDependencies(fixes);
+      const batchIndexById = new Map<string, number>();
+      for (let i = 0; i < batches.length; i++) {
+        for (const id of batches[i]) {
+          batchIndexById.set(id, i);
+        }
+      }
+
+      expect(batchIndexById.get("fix-0")).toBeLessThan(
+        batchIndexById.get("fix-1") ?? Infinity
+      );
     });
   });
 

@@ -3,9 +3,16 @@
     "initialErrors": 2,
     "finalErrors": 2,
     "fixedCount": 0,
-    "remainingCount": 2
+    "remainingCount": 2,
+    "budget": {
+      "candidatesGenerated": 2,
+      "candidatesVerified": 2,
+      "verificationBudget": 500,
+      "budgetExhausted": false
+    }
   },
   "steps": [],
+  "batches": [],
   "remaining": [
     {
       "code": 2552,

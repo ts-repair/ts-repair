@@ -13,6 +13,7 @@ export type {
   RepairResponse,
   RepairPlan,
   VerifiedFix,
+  FixDependencies,
   ClassifiedDiagnostic,
   DiagnosticRef,
   DiagnosticDisposition,

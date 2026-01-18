@@ -36,8 +36,18 @@
         "before": 1,
         "after": 0,
         "delta": 1
+      },
+      "dependencies": {
+        "conflictsWith": [],
+        "requires": [],
+        "exclusiveGroup": null
       }
     }
+  ],
+  "batches": [
+    [
+      "fix-0"
+    ]
   ],
   "remaining": []
 }

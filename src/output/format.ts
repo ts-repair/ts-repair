@@ -52,6 +52,19 @@ export function formatPlanText(plan: RepairPlan): string {
     }
   }
 
+  if (plan.batches.length > 0) {
+    lines.push("─".repeat(60));
+    lines.push("COMPATIBLE BATCHES:");
+    lines.push("");
+
+    for (let i = 0; i < plan.batches.length; i++) {
+      const batch = plan.batches[i];
+      lines.push(`${i + 1}. ${batch.join(", ")}`);
+    }
+
+    lines.push("");
+  }
+
   if (plan.remaining.length > 0) {
     lines.push("─".repeat(60));
     lines.push("REMAINING (require judgment):");
@@ -118,7 +131,13 @@ export function formatPlanJSON(plan: RepairPlan): string {
         after: step.errorsAfter,
         delta: step.delta,
       },
+      dependencies: {
+        conflictsWith: step.dependencies.conflictsWith,
+        requires: step.dependencies.requires,
+        exclusiveGroup: step.dependencies.exclusiveGroup ?? null,
+      },
     })),
+    batches: plan.batches,
     remaining: plan.remaining.map((diag) => ({
       code: diag.code,
       message: diag.message,
@@ -154,7 +173,13 @@ export function formatPlanCompact(plan: RepairPlan): string {
         end: c.end,
         text: c.newText.length > 100 ? c.newText.slice(0, 100) + "..." : c.newText,
       })),
+      dependencies: {
+        conflictsWith: step.dependencies.conflictsWith,
+        requires: step.dependencies.requires,
+        exclusiveGroup: step.dependencies.exclusiveGroup ?? null,
+      },
     })),
+    batches: plan.batches,
     remaining: plan.remaining.map((diag) => ({
       code: diag.code,
       file: path.basename(diag.file),

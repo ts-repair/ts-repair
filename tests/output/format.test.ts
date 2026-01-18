@@ -27,6 +27,7 @@ function createTestPlan(overrides: Partial<RepairPlan> = {}): RepairPlan {
   return {
     steps: overrides.steps ?? [],
     remaining: overrides.remaining ?? [],
+    batches: overrides.batches ?? [],
     summary: {
       initialErrors: summaryOverrides.initialErrors ?? 0,
       finalErrors: summaryOverrides.finalErrors ?? 0,
@@ -66,6 +67,10 @@ function createTestFix(overrides: Partial<VerifiedFix> = {}): VerifiedFix {
     errorsAfter: 2,
     delta: 1,
     risk: "low",
+    dependencies: {
+      conflictsWith: [],
+      requires: [],
+    },
     ...overrides,
   };
 }
@@ -106,6 +111,7 @@ describe("formatPlanText", () => {
         fixedCount: 1,
         remainingCount: 0,
       },
+      batches: [["fix-0"]],
     });
 
     const output = formatPlanText(plan);
@@ -117,6 +123,24 @@ describe("formatPlanText", () => {
     expect(output).toContain("Error: TS2304");
     expect(output).toContain("Effect: 3 → 2 errors");
     expect(output).toContain("Risk: low");
+    expect(output).toContain("COMPATIBLE BATCHES");
+    expect(output).toContain("1. fix-0");
+  });
+
+  it("skips batches section when empty", () => {
+    const plan = createTestPlan({
+      steps: [createTestFix()],
+      summary: {
+        initialErrors: 1,
+        finalErrors: 0,
+        fixedCount: 1,
+        remainingCount: 0,
+      },
+    });
+
+    const output = formatPlanText(plan);
+
+    expect(output).not.toContain("COMPATIBLE BATCHES");
   });
 
   it("formats plan with remaining diagnostics", () => {
@@ -282,11 +306,13 @@ describe("formatPlanJSON", () => {
         fixedCount: 1,
         remainingCount: 0,
       },
+      batches: [["fix-0"]],
     });
 
     const output = JSON.parse(formatPlanJSON(plan));
 
     expect(output.steps).toHaveLength(1);
+    expect(output.batches).toEqual([["fix-0"]]);
     const step = output.steps[0];
 
     expect(step.id).toBe("fix-0");
@@ -298,6 +324,9 @@ describe("formatPlanJSON", () => {
     expect(step.effect.before).toBe(3);
     expect(step.effect.after).toBe(2);
     expect(step.effect.delta).toBe(1);
+    expect(step.dependencies.conflictsWith).toEqual([]);
+    expect(step.dependencies.requires).toEqual([]);
+    expect(step.dependencies.exclusiveGroup).toBeNull();
   });
 
   it("includes remaining diagnostics", () => {
@@ -346,11 +375,41 @@ describe("formatPlanCompact", () => {
         fixedCount: 3,
         remainingCount: 2,
       },
+      batches: [["fix-0", "fix-1"]],
     });
 
     const output = JSON.parse(formatPlanCompact(plan));
 
     expect(output.errors).toBe("5 → 2");
+    expect(output.batches).toEqual([["fix-0", "fix-1"]]);
+  });
+
+  it("includes dependencies in compact fixes", () => {
+    const plan = createTestPlan({
+      steps: [
+        createTestFix({
+          dependencies: {
+            conflictsWith: ["fix-1"],
+            requires: ["fix-2"],
+            exclusiveGroup: "group-1",
+          },
+        }),
+      ],
+      summary: {
+        initialErrors: 1,
+        finalErrors: 0,
+        fixedCount: 1,
+        remainingCount: 0,
+      },
+      batches: [["fix-0"]],
+    });
+
+    const output = JSON.parse(formatPlanCompact(plan));
+
+    expect(output.fixes[0].dependencies.conflictsWith).toEqual(["fix-1"]);
+    expect(output.fixes[0].dependencies.requires).toEqual(["fix-2"]);
+    expect(output.fixes[0].dependencies.exclusiveGroup).toBe("group-1");
+    expect(output.batches).toEqual([["fix-0"]]);
   });
 
   it("uses basename for file paths", () => {

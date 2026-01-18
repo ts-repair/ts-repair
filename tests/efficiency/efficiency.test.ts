@@ -172,6 +172,7 @@ describe("Efficiency Tests", () => {
       // Summary should be consistent
       expect(result.summary.fixedCount).toBe(result.steps.length);
       expect(result.summary.remainingCount).toBe(result.remaining.length);
+      expect(Array.isArray(result.batches)).toBe(true);
 
       // Final errors should match remaining count
       expect(result.summary.finalErrors).toBe(result.summary.remainingCount);

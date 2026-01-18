@@ -276,6 +276,8 @@ Success is measured by:
 ### Phase 2: Dependency Metadata
 
 * conflictsWith / requires detection
+* exclusiveGroup for competing fixes targeting the same diagnostic
+* batch computation for non-conflicting fix sets
 
 ### Phase 3: Solver Integration
 

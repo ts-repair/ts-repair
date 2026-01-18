@@ -18,6 +18,7 @@ import type {
   ClassifiedDiagnostic,
   RepairRequest,
   BudgetStats,
+  FixDependencies,
 } from "../output/types.js";
 import { createBudgetLogger, createNoopLogger, type BudgetLogger } from "./logger.js";
 
@@ -126,6 +127,12 @@ interface VerificationResult {
   newDiagnostics: ts.Diagnostic[];
 }
 
+interface EditRange {
+  file: string;
+  start: number;
+  end: number;
+}
+
 /**
  * Speculatively apply a fix and measure the diagnostic delta
  */
@@ -184,6 +191,232 @@ function verify(
     delta: errorsBefore - errorsAfter,
     newDiagnostics,
   };
+}
+
+// ============================================================================
+// Dependency Metadata
+// ============================================================================
+
+function normalizeRange(range: EditRange): EditRange {
+  if (range.start === range.end) {
+    return { ...range, end: range.end + 1 };
+  }
+  return range;
+}
+
+function rangesOverlap(a: EditRange, b: EditRange): boolean {
+  if (a.file !== b.file) return false;
+  const left = normalizeRange(a);
+  const right = normalizeRange(b);
+  return left.start < right.end && right.start < left.end;
+}
+
+function toEditRanges(changes: { file: string; start: number; end: number }[]): EditRange[] {
+  return changes.map((change) => ({
+    file: change.file,
+    start: change.start,
+    end: change.end,
+  }));
+}
+
+function toInsertionRanges(
+  changes: { file: string; start: number; end: number; newText: string }[]
+): EditRange[] {
+  const ranges: EditRange[] = [];
+  for (const change of changes) {
+    if (change.start === change.end && change.newText.length > 0) {
+      ranges.push({
+        file: change.file,
+        start: change.start,
+        end: change.start + change.newText.length,
+      });
+    }
+  }
+  return ranges;
+}
+
+function addUnique(items: string[], value: string): void {
+  if (!items.includes(value)) {
+    items.push(value);
+  }
+}
+
+export function deriveDependencies(steps: VerifiedFix[]): string[][] {
+  const dependenciesById = new Map<string, FixDependencies>();
+  const editsById = new Map<string, EditRange[]>();
+  const insertionsById = new Map<string, EditRange[]>();
+  const stepById = new Map<string, VerifiedFix>();
+
+  for (const step of steps) {
+    dependenciesById.set(step.id, { conflictsWith: [], requires: [], exclusiveGroup: undefined });
+    editsById.set(step.id, toEditRanges(step.changes));
+    insertionsById.set(step.id, toInsertionRanges(step.changes));
+    stepById.set(step.id, step);
+  }
+
+  const diagnosticGroups = new Map<string, string[]>();
+  for (const step of steps) {
+    const key = `${step.diagnostic.file}:${step.diagnostic.code}:${step.diagnostic.start}:${step.diagnostic.length}:${step.diagnostic.message}`;
+    const group = diagnosticGroups.get(key) ?? [];
+    group.push(step.id);
+    diagnosticGroups.set(key, group);
+  }
+
+  for (const group of diagnosticGroups.values()) {
+    if (group.length <= 1) {
+      continue;
+    }
+    const groupId = `diagnostic:${group.join("+")}`;
+    for (const fixId of group) {
+      const step = stepById.get(fixId);
+      if (step) {
+        const deps = dependenciesById.get(step.id);
+        if (deps) {
+          deps.exclusiveGroup = groupId;
+        }
+      }
+    }
+  }
+
+  for (let i = 0; i < steps.length; i++) {
+    for (let j = i + 1; j < steps.length; j++) {
+      const left = steps[i];
+      const right = steps[j];
+      const leftEdits = editsById.get(left.id) ?? [];
+      const rightEdits = editsById.get(right.id) ?? [];
+      const leftInsertions = insertionsById.get(left.id) ?? [];
+
+      let overlaps = false;
+      for (const leftEdit of leftEdits) {
+        for (const rightEdit of rightEdits) {
+          if (rangesOverlap(leftEdit, rightEdit)) {
+            overlaps = true;
+            break;
+          }
+        }
+        if (overlaps) break;
+      }
+
+      if (!overlaps) {
+        continue;
+      }
+
+      let requiresLeft = false;
+      for (const insertion of leftInsertions) {
+        for (const rightEdit of rightEdits) {
+          if (rangesOverlap(insertion, rightEdit)) {
+            requiresLeft = true;
+            break;
+          }
+        }
+        if (requiresLeft) break;
+      }
+
+      if (requiresLeft) {
+        const deps = dependenciesById.get(right.id);
+        if (deps) {
+          addUnique(deps.requires, left.id);
+        }
+        continue;
+      }
+
+      const leftDeps = dependenciesById.get(left.id);
+      const rightDeps = dependenciesById.get(right.id);
+      if (leftDeps && rightDeps) {
+        addUnique(leftDeps.conflictsWith, right.id);
+        addUnique(rightDeps.conflictsWith, left.id);
+      }
+    }
+  }
+
+  for (const step of steps) {
+    const deps = dependenciesById.get(step.id);
+    if (deps) {
+      step.dependencies = deps;
+    }
+  }
+
+  return computeBatches(steps);
+}
+
+export function computeBatches(steps: VerifiedFix[]): string[][] {
+  const batches: string[][] = [];
+  const batchIndexById = new Map<string, number>();
+  const stepById = new Map<string, VerifiedFix>();
+
+  for (const step of steps) {
+    stepById.set(step.id, step);
+  }
+
+  for (const step of steps) {
+    let placed = false;
+
+    for (let i = 0; i < batches.length; i++) {
+      if (!canJoinBatch(step, batches[i], i, batchIndexById, stepById)) {
+        continue;
+      }
+
+      batches[i].push(step.id);
+      batchIndexById.set(step.id, i);
+      placed = true;
+      break;
+    }
+
+    if (!placed) {
+      batches.push([step.id]);
+      batchIndexById.set(step.id, batches.length - 1);
+    }
+  }
+
+  return batches;
+}
+
+function canJoinBatch(
+  step: VerifiedFix,
+  batch: string[],
+  batchIndex: number,
+  batchIndexById: Map<string, number>,
+  stepById: Map<string, VerifiedFix>
+): boolean {
+  const requiresIndexes = step.dependencies.requires.map((req) =>
+    batchIndexById.get(req)
+  );
+
+  for (const index of requiresIndexes) {
+    if (index === undefined) {
+      return false;
+    }
+    if (index === batchIndex) {
+      return false;
+    }
+    if (index > batchIndex) {
+      return false;
+    }
+  }
+
+  for (const memberId of batch) {
+    if (step.dependencies.conflictsWith.includes(memberId)) {
+      return false;
+    }
+
+    const member = stepById.get(memberId);
+    if (!member) {
+      continue;
+    }
+
+    if (member.dependencies.conflictsWith.includes(step.id)) {
+      return false;
+    }
+
+    if (
+      member.dependencies.exclusiveGroup &&
+      member.dependencies.exclusiveGroup === step.dependencies.exclusiveGroup
+    ) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 // ============================================================================
@@ -427,16 +660,23 @@ export function plan(
       },
     });
 
+    const changes = toFileChanges(bestFix.fix);
+    const diagnosticRef = toDiagnosticRef(bestFix.diagnostic);
+
     steps.push({
       id: `fix-${fixId++}`,
-      diagnostic: toDiagnosticRef(bestFix.diagnostic),
+      diagnostic: diagnosticRef,
       fixName: bestFix.fix.fixName,
       fixDescription: bestFix.fix.description,
-      changes: toFileChanges(bestFix.fix),
+      changes,
       errorsBefore: bestFix.result.errorsBefore,
       errorsAfter: bestFix.result.errorsAfter,
       delta: bestFix.result.delta,
       risk: bestFix.risk,
+      dependencies: {
+        conflictsWith: [],
+        requires: [],
+      },
     });
   }
 
@@ -463,9 +703,12 @@ export function plan(
     budgetExhausted,
   };
 
+  const batches = deriveDependencies(steps);
+
   return {
     steps,
     remaining,
+    batches,
     summary: {
       initialErrors,
       finalErrors: finalDiagnostics.length,

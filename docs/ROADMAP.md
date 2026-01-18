@@ -141,10 +141,10 @@ Track relationships between repairs for batching.
 
 | Component | Status | Priority | Notes |
 |-----------|--------|----------|-------|
-| conflictsWith detection | 📋 Planned | Medium | XOR: can't apply together |
-| requires detection | 📋 Planned | Medium | Prerequisites |
-| exclusiveGroup detection | 📋 Planned | Low | Exactly-one-of |
-| Batch computation | 📋 Planned | Medium | Non-conflicting groups |
+| conflictsWith detection | ✅ Done | Medium | Overlapping edits in same file |
+| requires detection | ✅ Done | Medium | Insertions that require prior edit |
+| exclusiveGroup detection | ✅ Done | Low | Same diagnostic targets |
+| Batch computation | ✅ Done | Medium | Non-conflicting groups |
 
 ### Phase 5: Solver Integration
 
