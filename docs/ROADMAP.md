@@ -62,49 +62,56 @@ Verification budget as a first-class constraint in the Planner + Verification la
 - When budget exhausted: returns partial plan, remaining diagnostics classified as NeedsJudgment
 - Output includes `BudgetStats`: candidatesGenerated, candidatesVerified, verificationBudget, budgetExhausted
 
-### Phase 2.6: CLI Implementation 📋 Planned
+### Phase 2.6: CLI Implementation ✅ Complete
 
-Implement the full CLI as specified in [docs/ts_repair_cli_specification.md](ts_repair_cli_specification.md).
+Full CLI implementation as specified in [docs/ts_repair_cli_specification.md](ts_repair_cli_specification.md).
 
 | Component | Status | Priority | Notes |
 |-----------|--------|----------|-------|
-| `ts-repair tsc` command | 📋 Planned | High | tsc-compatible passthrough with `--plan` and `--auto` flags |
-| `ts-repair check` command | 📋 Planned | High | Convenience wrapper for `tsc --noEmit` |
-| `ts-repair plan` command | 📋 Planned | High | Generate verified repair plan (replaces current `repair`) |
-| `ts-repair apply` command | 📋 Planned | High | Apply repairs from plan or `--auto` mode |
-| `ts-repair explain` command | 📋 Planned | Medium | Explain specific repair candidates |
-| Global options | 📋 Planned | High | `-p/--project`, `--format`, `--verbose` |
-| Exit codes | 📋 Planned | High | 0=clean, 1=diagnostics remain, 2=tool error |
+| `ts-repair tsc` command | ✅ Done | High | tsc-compatible passthrough with `--plan` and `--auto` flags |
+| `ts-repair check` command | ✅ Done | High | Convenience wrapper for `tsc --noEmit` |
+| `ts-repair plan` command | ✅ Done | High | Generate verified repair plan |
+| `ts-repair apply` command | ✅ Done | High | Apply repairs from plan or `--auto` mode |
+| `ts-repair explain` command | ✅ Done | Medium | Explain specific repair candidates |
+| `ts-repair repair` command | ✅ Done | High | Combined plan + optional apply |
+| `ts-repair preview` command | ✅ Done | Medium | Preview budget impact without verification |
+| Global options | ✅ Done | High | `-p/--project`, `--format`, `--verbose` |
+| Exit codes | ✅ Done | High | 0=clean, 1=diagnostics remain, 2=tool error |
 | `tsr` alias | 📋 Planned | Low | Optional convenience alias |
 
-**Design notes:**
+**Implementation notes:**
 - Drop-in compatible with existing `tsc` workflows
 - Deterministic and scriptable for agents and CI
-- Default format: text for `tsc`/`check`, json for `plan`/`apply`
+- Default format: text for `tsc`/`check`/`repair`, json for `plan`/`apply`
 - No workspace mutation without explicit `apply` or `--auto`
 
-### Phase 2.7: Scoring Function 📋 Planned
+### Phase 2.7: Scoring Function ✅ Complete
 
-Implement the weighted scoring function from the PRD for ranking repair candidates.
+Configurable scoring strategies for ranking repair candidates.
 
 | Component | Status | Priority | Notes |
 |-----------|--------|----------|-------|
-| resolvedWeight calculation | 📋 Planned | Medium | Weighted sum of resolved diagnostics |
-| introducedWeight penalty | 📋 Planned | Medium | Weighted penalty (K multiplier) |
-| editSize penalty | 📋 Planned | Medium | Tokens/nodes changed (α multiplier) |
-| semanticRiskPenalty | 📋 Planned | Medium | Risk-based penalty |
+| Delta scoring strategy | ✅ Done | High | Simple `errorsBefore - errorsAfter` (default) |
+| Weighted scoring strategy | ✅ Done | Medium | Full weighted formula with penalties |
+| resolvedWeight calculation | ✅ Done | Medium | Weighted sum of resolved diagnostics |
+| introducedWeight penalty | ✅ Done | Medium | Weighted penalty (K=4 multiplier) |
+| editSize penalty | ✅ Done | Medium | Tokens changed (α=0.0015 multiplier) |
+| semanticRiskPenalty | ✅ Done | Medium | Risk-based penalty (low=0, medium=0.75, high=2.0) |
+| `--scoring-strategy` flag | ✅ Done | Medium | CLI option to select strategy |
+| Configurable weights | ✅ Done | Low | Via `scoreWeights` in RepairRequest |
 
-**Scoring Formula (from PRD):**
+**Scoring Formula (weighted strategy):**
 
 ```
 score = resolvedWeight - (introducedWeight × K) - (editSize × α) - semanticRiskPenalty
 ```
 
-Where:
-- `introducedWeight` is typically a hard or near-hard penalty
-- `semanticRiskPenalty` follows: imports < guards < coercions < casts
+**Default weights:**
+- `introducedMultiplier` (K): 4
+- `editSizeAlpha` (α): 0.0015
+- `riskPenalty`: low=0, medium=0.75, high=2.0
 
-**Note:** Currently using simpler delta-based ranking. This phase adds the full weighted formula.
+**Usage:** `ts-repair repair --scoring-strategy weighted`
 
 ### Phase 3: Diagnostic Classification ✅ Complete
 
@@ -135,7 +142,7 @@ Classification rules (strictly based on observed pipeline state):
 
 All output formats (text, JSON, compact) preserve the internal distinction.
 
-### Phase 4: Dependency Metadata
+### Phase 4: Dependency Metadata ✅ Complete
 
 Track relationships between repairs for batching.
 
@@ -144,7 +151,15 @@ Track relationships between repairs for batching.
 | conflictsWith detection | ✅ Done | Medium | Overlapping edits in same file |
 | requires detection | ✅ Done | Medium | Insertions that require prior edit |
 | exclusiveGroup detection | ✅ Done | Low | Same diagnostic targets |
-| Batch computation | ✅ Done | Medium | Non-conflicting groups |
+| Batch computation | ✅ Done | Medium | Non-conflicting groups via `deriveDependencies()` |
+| FixDependencies type | ✅ Done | Medium | Structured dependency metadata per fix |
+| Batches in RepairPlan | ✅ Done | Medium | `batches` array of compatible fix groups |
+
+**Implementation notes:**
+- Each `VerifiedFix` includes `dependencies: FixDependencies`
+- `deriveDependencies()` computes conflicts from overlapping edit ranges
+- `RepairPlan.batches` contains arrays of fix IDs that can be applied together
+- Agents can apply entire batches without re-verification
 
 ### Phase 5: Solver Integration
 
@@ -408,17 +423,17 @@ The following components from the old ts-repair (language compiler) should be re
 
 ## Timeline
 
-| Phase | Target | Notes |
+| Phase | Status | Notes |
 |-------|--------|-------|
 | Phase 1 | ✅ Done | Prototype working |
 | Phase 2 | ✅ Done | Production implementation |
 | Phase 2.5 | ✅ Done | Budget constraints |
-| Phase 2.6 | Planned | CLI implementation |
-| Phase 2.7 | Planned | Scoring function (from PRD) |
+| Phase 2.6 | ✅ Done | CLI implementation (all commands) |
+| Phase 2.7 | ✅ Done | Scoring function (delta + weighted) |
 | Phase 3 | ✅ Done | Classification |
-| Phase 4 | Planned | Dependency metadata |
-| Phase 5 | Planned | Solver (if needed) |
-| Phase 6 | Planned | Agent integration (MCP) |
+| Phase 4 | ✅ Done | Dependency metadata + batching |
+| Phase 5 | 📋 Planned | Solver (if needed) |
+| Phase 6 | 📋 Planned | Agent integration (MCP) |
 | Phase 7 | After benchmarks | Protocol specification |
 | Phase 8 | After protocol | Multi-language support |
 | Phase 9 | Optional | Learning (weight tuning) |
@@ -520,6 +535,4 @@ TypeScript's code fix suggestions sometimes prefer re-export paths (e.g., `impor
 ---
 
 *Last updated: January 18, 2026*
-*Roadmap aligned with PRD: added scoring function (2.7), solver triggers (5), agent policy (7), learning (9).*
-*Added Known Issues section from ad-hoc benchmark findings.*
-*Added Scoring Strategy Benchmark roadmap item.*
+*Phases 1-4, 2.5-2.7 complete. Next: Phase 5 (Solver) or Phase 6 (Agent Integration).*
