@@ -23,6 +23,17 @@ import type {
 import { createBudgetLogger, createNoopLogger, type BudgetLogger } from "./logger.js";
 
 // ============================================================================
+// Scoring Strategy
+// ============================================================================
+
+/**
+ * Scoring strategy for candidate ranking.
+ * - "delta": Simple error count difference (errorsBefore - errorsAfter)
+ * - "weighted": Weighted formula considering diagnostics, edit size, and risk
+ */
+export type ScoringStrategy = "delta" | "weighted";
+
+// ============================================================================
 // Risk Assessment
 // ============================================================================
 
@@ -32,7 +43,8 @@ import { createBudgetLogger, createNoopLogger, type BudgetLogger } from "./logge
 export function assessRisk(fixName: string): "low" | "medium" | "high" {
   // Low risk - almost always correct
   const lowRisk = [
-    "fixMissingImport",
+    "import", // TypeScript's actual name for "Add import from ..."
+    "fixMissingImport", // Keep for compatibility
     "addMissingAsync",
     "addMissingAwait",
     "fixAwaitInSyncFunction",
@@ -107,6 +119,30 @@ export function pruneCandidates(
 }
 
 // ============================================================================
+// Scoring Weights
+// ============================================================================
+
+export const DEFAULT_SCORE_WEIGHTS = {
+  introducedMultiplier: 4,
+  editSizeAlpha: 0.0015,
+  riskPenalty: {
+    low: 0,
+    medium: 0.75,
+    high: 2.0,
+  },
+} as const;
+
+export type ScoreWeights = {
+  introducedMultiplier: number;
+  editSizeAlpha: number;
+  riskPenalty: {
+    low: number;
+    medium: number;
+    high: number;
+  };
+};
+
+// ============================================================================
 // Verification
 // ============================================================================
 
@@ -125,6 +161,56 @@ interface VerificationResult {
 
   /** New diagnostics introduced by this fix */
   newDiagnostics: ts.Diagnostic[];
+
+  /** Weighted sum of resolved diagnostics (for weighted strategy) */
+  resolvedWeight: number;
+
+  /** Weighted sum of introduced diagnostics (for weighted strategy) */
+  introducedWeight: number;
+
+  /** Total edit size for the fix (for weighted strategy) */
+  editSize: number;
+}
+
+function diagnosticKey(diagnostic: ts.Diagnostic): string {
+  const file = diagnostic.file?.fileName ?? "<unknown>";
+  const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, " ");
+  return `${file}::${diagnostic.code}::${message}`;
+}
+
+function diagnosticWeight(diagnostic: ts.Diagnostic): number {
+  switch (diagnostic.category) {
+    case ts.DiagnosticCategory.Warning:
+      return 0.5;
+    case ts.DiagnosticCategory.Suggestion:
+      return 0.25;
+    case ts.DiagnosticCategory.Message:
+      return 0.1;
+    case ts.DiagnosticCategory.Error:
+    default:
+      return 1;
+  }
+}
+
+export function computeEditSize(fix: ts.CodeFixAction): number {
+  let size = 0;
+  for (const fileChange of fix.changes) {
+    for (const textChange of fileChange.textChanges) {
+      size += textChange.span.length + textChange.newText.length;
+    }
+  }
+  return size;
+}
+
+export function computeScore(
+  result: VerificationResult,
+  risk: "low" | "medium" | "high",
+  weights: ScoreWeights
+): number {
+  const introducedPenalty = result.introducedWeight * weights.introducedMultiplier;
+  const editPenalty = result.editSize * weights.editSizeAlpha;
+  const riskPenalty = weights.riskPenalty[risk];
+  return result.resolvedWeight - introducedPenalty - editPenalty - riskPenalty;
 }
 
 interface EditRange {
@@ -153,6 +239,7 @@ function verify(
   // Re-check
   const diagnosticsAfter = host.getDiagnostics();
   const errorsAfter = diagnosticsAfter.length;
+  const afterKeys = new Set(diagnosticsAfter.map(diagnosticKey));
 
   // Check if target diagnostic was fixed
   // Note: We can't match by position because applying a fix may shift positions.
@@ -180,6 +267,20 @@ function verify(
     );
   });
 
+  // Calculate weighted scores for weighted strategy
+  const resolvedDiagnostics = diagnosticsBefore.filter(
+    (before) => !afterKeys.has(diagnosticKey(before))
+  );
+  const resolvedWeight = resolvedDiagnostics.reduce(
+    (sum, d) => sum + diagnosticWeight(d),
+    0
+  );
+  const introducedWeight = newDiagnostics.reduce(
+    (sum, d) => sum + diagnosticWeight(d),
+    0
+  );
+  const editSize = computeEditSize(fix);
+
   // Restore VFS and notify host so LanguageService sees updated files
   vfs.restore(snapshot);
   host.notifyFilesChanged();
@@ -190,6 +291,9 @@ function verify(
     errorsAfter,
     delta: errorsBefore - errorsAfter,
     newDiagnostics,
+    resolvedWeight,
+    introducedWeight,
+    editSize,
   };
 }
 
@@ -442,6 +546,12 @@ export interface PlanOptions {
   /** Maximum planning iterations */
   maxIterations: number;
 
+  /** Scoring strategy for candidate ranking */
+  scoringStrategy: ScoringStrategy;
+
+  /** Score weights for weighted scoring strategy */
+  scoreWeights: ScoreWeights;
+
   /** Callback for progress updates */
   onProgress?: (message: string) => void;
 
@@ -456,6 +566,8 @@ const DEFAULT_OPTIONS: PlanOptions = {
   allowRegressions: false,
   includeHighRisk: false,
   maxIterations: 50,
+  scoringStrategy: "delta",
+  scoreWeights: DEFAULT_SCORE_WEIGHTS,
 };
 
 /**
@@ -516,6 +628,7 @@ export function plan(
       fix: ts.CodeFixAction;
       result: VerificationResult;
       risk: "low" | "medium" | "high";
+      score: number; // Used by weighted strategy
     } | null = null;
 
     // Track candidates per iteration
@@ -626,14 +739,36 @@ export function plan(
           continue;
         }
 
-        // Skip fixes with non-positive delta
-        if (result.delta <= 0) {
-          continue;
-        }
+        // Branch on scoring strategy
+        if (opts.scoringStrategy === "weighted") {
+          // Weighted scoring
+          const score = computeScore(result, risk, opts.scoreWeights);
 
-        // Is this the best fix so far?
-        if (!bestFix || result.delta > bestFix.result.delta) {
-          bestFix = { diagnostic, fix, result, risk };
+          // Skip fixes with non-positive score
+          if (score <= 0) {
+            continue;
+          }
+
+          // Also require delta > 0 (monotonic progress)
+          if (result.delta <= 0) {
+            continue;
+          }
+
+          // Is this the best fix so far?
+          if (!bestFix || score > bestFix.score) {
+            bestFix = { diagnostic, fix, result, risk, score };
+          }
+        } else {
+          // Delta scoring (default)
+          // Skip fixes with non-positive delta
+          if (result.delta <= 0) {
+            continue;
+          }
+
+          // Is this the best fix so far?
+          if (!bestFix || result.delta > bestFix.result.delta) {
+            bestFix = { diagnostic, fix, result, risk, score: result.delta };
+          }
         }
       }
     }
@@ -801,6 +936,15 @@ export function repair(
     maxVerifications: request.maxVerifications ?? 500,
     allowRegressions: request.allowRegressions ?? false,
     includeHighRisk: request.includeHighRisk ?? false,
+    scoringStrategy: request.scoringStrategy ?? "delta",
+    scoreWeights: {
+      ...DEFAULT_SCORE_WEIGHTS,
+      ...request.scoreWeights,
+      riskPenalty: {
+        ...DEFAULT_SCORE_WEIGHTS.riskPenalty,
+        ...request.scoreWeights?.riskPenalty,
+      },
+    },
     logger,
   });
 }

@@ -151,17 +151,21 @@ describe("Golden Tests", () => {
 
   describe("missing-import fixture", () => {
     it(
-      "classifies unfixable imports correctly",
+      "fixes missing imports correctly",
       () => {
-        // This fixture has errors that TypeScript suggests spelling fixes for,
-        // but they don't actually fix the problem (they're high risk)
+        // This fixture has missing imports from ./helpers
+        // TypeScript suggests "Add import from './helpers'" which is low-risk
+        // and should be successfully applied
         const configPath = path.join(FIXTURES_DIR, "missing-import/tsconfig.json");
         const result = plan(configPath, { maxIterations: 5, maxCandidates: 3 });
         const output = formatPlanJSON(result);
         const normalized = normalizePlan(output);
 
-        // Should have remaining diagnostics (imports not auto-fixable in this setup)
-        expect((normalized as any).remaining.length).toBeGreaterThan(0);
+        // With "import" in low-risk patterns, imports should be fixable
+        // The plan should have steps that fix the imports
+        expect((normalized as any).steps.length).toBeGreaterThan(0);
+        // All errors should be resolved
+        expect((normalized as any).summary.finalErrors).toBe(0);
       },
       { timeout: 15000 }
     );

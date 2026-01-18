@@ -117,6 +117,20 @@ export interface RepairPlan {
 // API
 // ============================================================================
 
+/** Scoring strategy for candidate ranking */
+export type ScoringStrategy = "delta" | "weighted";
+
+/** Score weights for weighted scoring strategy */
+export interface ScoreWeights {
+  introducedMultiplier?: number;
+  editSizeAlpha?: number;
+  riskPenalty?: {
+    low?: number;
+    medium?: number;
+    high?: number;
+  };
+}
+
 export interface RepairRequest {
   /** Path to tsconfig.json */
   project: string;
@@ -135,6 +149,12 @@ export interface RepairRequest {
 
   /** Include high-risk fixes in the plan (default: false) */
   includeHighRisk?: boolean;
+
+  /** Scoring strategy for candidate ranking (default: delta) */
+  scoringStrategy?: ScoringStrategy;
+
+  /** Scoring weights for weighted strategy */
+  scoreWeights?: ScoreWeights;
 }
 
 export interface RepairResponse {

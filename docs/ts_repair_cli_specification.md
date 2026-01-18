@@ -29,6 +29,8 @@ ts-repair check [options]
 ts-repair plan [options]
 ts-repair apply [options]
 ts-repair explain [options]
+ts-repair repair [options]
+ts-repair preview [options]
 ```
 
 ---
@@ -170,6 +172,83 @@ Output includes:
 
 ---
 
+### `ts-repair repair`
+
+Combined plan generation with optional auto-apply. The primary command for most use cases.
+
+Example:
+```
+ts-repair repair -p tsconfig.json
+ts-repair repair --apply
+ts-repair repair --scoring-strategy weighted
+```
+
+Options:
+```
+--json                              Output as JSON
+--compact                           Output compact JSON (for agents)
+--apply                             Apply fixes to files after planning
+--include-high-risk                 Include high-risk fixes
+--trace                             Output budget event log as JSON
+--max-verifications <n>             Max speculative typecheck runs (default: 500)
+--max-candidates-per-iteration <n>  Max candidates per iteration (default: 100)
+--scoring-strategy <delta|weighted> Candidate ranking method (default: delta)
+```
+
+Behavior:
+- Generates a verified repair plan
+- If `--apply` is specified, applies low/medium risk fixes to files
+- With `--apply --include-high-risk`, applies all fixes including high risk
+
+Default format: `text`
+
+---
+
+### `ts-repair preview`
+
+Previews budget impact without running verifications. Useful for estimating cost before planning.
+
+Example:
+```
+ts-repair preview -p tsconfig.json
+ts-repair preview --json
+```
+
+Options:
+```
+--json                 Output as JSON
+--include-high-risk    Include high-risk candidates in estimate
+```
+
+Default format: `text`
+
+---
+
+## Scoring Strategies
+
+ts-repair supports two scoring strategies for ranking repair candidates:
+
+### Delta Strategy (Default)
+
+Simple error count difference: `errorsBefore - errorsAfter`
+
+- Fast and predictable
+- Prefers fixes that reduce the most errors
+- Good for straightforward repairs
+
+### Weighted Strategy
+
+Formula: `resolvedWeight - (introducedWeight × K) - (editSize × α) - riskPenalty`
+
+- Considers diagnostic severity (errors vs warnings)
+- Penalizes large edits
+- Penalizes high-risk fixes
+- Better for nuanced repairs
+
+Use `--scoring-strategy weighted` to enable.
+
+---
+
 ## Output Formats
 
 All commands support:
@@ -179,7 +258,7 @@ All commands support:
 
 Defaults:
 - `tsc`, `check` → `text`
-- `plan`, `apply` → `json`
+- `plan`, `apply`, `repair` → `json` (except `repair` defaults to `text`)
 
 ---
 
