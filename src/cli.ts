@@ -13,6 +13,7 @@
  *   ts-repair explain             Explain a repair candidate
  *   ts-repair repair              Generate plan + optional auto-apply (new)
  *   ts-repair preview             Preview budget impact without verification (new)
+ *   ts-repair mcp-server          Run MCP server for agent integration
  *
  * See docs/ts_repair_cli_specification.md for full specification.
  */
@@ -22,6 +23,7 @@ import { previewBudgetImpact, formatPreviewText, formatPreviewJSON } from "./ora
 import { formatPlanText, formatPlanJSON, formatPlanCompact } from "./output/format.js";
 import type { RepairPlan, VerifiedFix, FileChange } from "./output/types.js";
 import { createTypeScriptHost } from "./oracle/typescript.js";
+import { runMcpServer } from "./mcp/server.js";
 import type { ScoringStrategy } from "./oracle/planner.js";
 import ts from "typescript";
 import fs from "fs";
@@ -813,6 +815,18 @@ function runPreview(global: GlobalOptions, args: string[]): void {
 }
 
 // ============================================================================
+// mcp-server Command
+// ============================================================================
+
+function runMcpServerCommand(): void {
+  // Run the MCP server - this function never returns (runs until killed)
+  runMcpServer().catch((e) => {
+    console.error(`MCP server error: ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(EXIT_ERROR);
+  });
+}
+
+// ============================================================================
 // Helpers
 // ============================================================================
 
@@ -867,6 +881,7 @@ Commands:
   explain --id <id>                      Explain a repair candidate
   repair                                 Generate plan with optional apply (new)
   preview                                Preview budget impact (new)
+  mcp-server                             Run MCP server for agent integration
   help                                   Show this help message
   version                                Show version information
 
@@ -936,6 +951,17 @@ Command: preview
     --json                     Output as JSON
     --include-high-risk        Include high-risk candidates in estimate
 
+Command: mcp-server
+  ts-repair mcp-server                   # Start MCP server for agent integration
+
+  Runs a Model Context Protocol (MCP) server over stdio. This enables
+  integration with AI coding assistants like Claude Code, OpenCode, and Codex.
+
+  Tools exposed:
+    ts_repair_plan   Generate a verified repair plan
+    ts_repair_apply  Apply verified repairs to files
+    ts_repair_check  Quick error count check
+
 Exit Codes:
   0  No remaining diagnostics / successful operation
   1  Diagnostics remain
@@ -1001,6 +1027,9 @@ function main(): void {
       break;
     case "preview":
       runPreview(global, remaining);
+      break;
+    case "mcp-server":
+      runMcpServerCommand();
       break;
     case "help":
     case "--help":
