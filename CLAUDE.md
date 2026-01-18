@@ -25,6 +25,8 @@ while diagnostics > 0:
 
 **Status:** Prototype complete. See [docs/ROADMAP.md](docs/ROADMAP.md) for implementation plan.
 
+Configuration reference: [docs/CONFIG.md](docs/CONFIG.md).
+
 ## Architecture
 
 ```
