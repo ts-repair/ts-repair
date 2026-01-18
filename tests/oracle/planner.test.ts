@@ -13,6 +13,9 @@ import {
   assessRisk,
   createBudgetLogger,
   deriveDependencies,
+  computeScore,
+  computeEditSize,
+  DEFAULT_SCORE_WEIGHTS,
   type PlanOptions,
 } from "../../src/oracle/planner.js";
 import path from "path";
@@ -821,6 +824,64 @@ describe("budget constraints", () => {
       },
       { timeout: 15000 }
     );
+  });
+});
+
+describe("scoring", () => {
+  it("penalizes introduced diagnostics", () => {
+    const result = {
+      targetFixed: true,
+      errorsBefore: 5,
+      errorsAfter: 5,
+      delta: 0,
+      newDiagnostics: [
+        {
+          category: 1,
+          code: 1234,
+          messageText: "New error",
+        } as any,
+      ],
+      resolvedWeight: 1,
+      introducedWeight: 1,
+      editSize: 0,
+    };
+
+    const score = computeScore(result as any, "low", DEFAULT_SCORE_WEIGHTS);
+    expect(score).toBeLessThan(0);
+  });
+
+  it("penalizes edit size over large diffs", () => {
+    const result = {
+      targetFixed: true,
+      errorsBefore: 2,
+      errorsAfter: 1,
+      delta: 1,
+      newDiagnostics: [],
+      resolvedWeight: 1,
+      introducedWeight: 0,
+      editSize: 5000,
+    };
+
+    const score = computeScore(result as any, "low", DEFAULT_SCORE_WEIGHTS);
+    expect(score).toBeLessThan(1);
+  });
+
+  it("applies higher penalties for higher risk", () => {
+    const result = {
+      targetFixed: true,
+      errorsBefore: 2,
+      errorsAfter: 1,
+      delta: 1,
+      newDiagnostics: [],
+      resolvedWeight: 2,
+      introducedWeight: 0,
+      editSize: 0,
+    };
+
+    const lowRisk = computeScore(result as any, "low", DEFAULT_SCORE_WEIGHTS);
+    const highRisk = computeScore(result as any, "high", DEFAULT_SCORE_WEIGHTS);
+
+    expect(lowRisk).toBeGreaterThan(highRisk);
   });
 });
 

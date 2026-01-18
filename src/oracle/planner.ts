@@ -146,7 +146,7 @@ export type ScoreWeights = {
 // Verification
 // ============================================================================
 
-interface VerificationResult {
+export interface VerificationResult {
   /** Did the fix eliminate the target diagnostic? */
   targetFixed: boolean;
 
@@ -588,7 +588,18 @@ export function plan(
   configPath: string,
   options: Partial<PlanOptions> = {}
 ): RepairPlan {
-  const opts = { ...DEFAULT_OPTIONS, ...options };
+  const opts = {
+    ...DEFAULT_OPTIONS,
+    ...options,
+    scoreWeights: {
+      ...DEFAULT_OPTIONS.scoreWeights,
+      ...options.scoreWeights,
+      riskPenalty: {
+        ...DEFAULT_OPTIONS.scoreWeights.riskPenalty,
+        ...options.scoreWeights?.riskPenalty,
+      },
+    },
+  };
   const host = createTypeScriptHost(configPath);
   const logger = opts.logger ?? createNoopLogger();
 
@@ -884,9 +895,11 @@ function classifyRemaining(
     for (const fix of fixes.slice(0, opts.maxCandidates)) {
       const result = verify(host, diagnostic, fix);
 
-      if (result.targetFixed && result.delta > 0) {
+      const risk = assessRisk(fix.fixName);
+      const score = computeScore(result, risk, opts.scoreWeights);
+
+      if (result.targetFixed && score > 0 && result.resolvedWeight > 0) {
         validFixCount++;
-        const risk = assessRisk(fix.fixName);
         if (risk === "low" || risk === "medium") {
           hasLowRiskFix = true;
         }
