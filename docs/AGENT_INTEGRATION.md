@@ -34,6 +34,19 @@ Add to `~/.claude/settings.json`:
 {
   "mcpServers": {
     "ts-repair": {
+      "command": "bunx",
+      "args": ["ts-repair", "mcp-server"]
+    }
+  }
+}
+```
+
+Or with npx:
+
+```json
+{
+  "mcpServers": {
+    "ts-repair": {
       "command": "npx",
       "args": ["ts-repair", "mcp-server"]
     }
@@ -59,6 +72,21 @@ Add to your `opencode.json`:
   "mcp": {
     "ts-repair": {
       "type": "local",
+      "command": ["bunx", "ts-repair", "mcp-server"],
+      "enabled": true,
+      "timeout": 60000
+    }
+  }
+}
+```
+
+Or with npx:
+
+```json
+{
+  "mcp": {
+    "ts-repair": {
+      "type": "local",
       "command": ["npx", "ts-repair", "mcp-server"],
       "enabled": true,
       "timeout": 60000
@@ -70,6 +98,17 @@ Add to your `opencode.json`:
 ### Codex CLI
 
 Add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.ts-repair]
+command = "bunx"
+args = ["ts-repair", "mcp-server"]
+startup_timeout_sec = 30
+tool_timeout_sec = 120
+enabled = true
+```
+
+Or with npx:
 
 ```toml
 [mcp_servers.ts-repair]
@@ -194,7 +233,7 @@ When properly configured, agents will use ts-repair when:
 
 ### MCP Server Not Starting
 
-1. Ensure ts-repair is installed: `npm install -g ts-repair`
+1. Ensure ts-repair is installed: `bun add -g ts-repair` (or `npm install -g ts-repair`)
 2. Test manually: `ts-repair mcp-server`
 3. Check the agent's MCP server logs
 
