@@ -131,6 +131,27 @@ export interface ScoreWeights {
   };
 }
 
+/** Verification cone options for controlling verification scope */
+export interface ConeOptions {
+  /** Maximum number of files to include in the cone (default: 50) */
+  maxConeSize?: number;
+
+  /** Whether to enable adaptive expansion (default: true) */
+  enableExpansion?: boolean;
+
+  /** Paths that indicate "core" or "shared" code (triggers expansion) */
+  corePathPatterns?: string[];
+
+  /** File extensions that indicate type-heavy files (triggers expansion) */
+  typeHeavyExtensions?: string[];
+
+  /** Minimum number of diagnostics referencing a symbol to trigger expansion */
+  sharedSymbolThreshold?: number;
+
+  /** Maximum depth for reverse dependency traversal */
+  maxReverseDependencyDepth?: number;
+}
+
 export interface RepairRequest {
   /** Path to tsconfig.json */
   project: string;
@@ -155,6 +176,9 @@ export interface RepairRequest {
 
   /** Scoring weights for weighted strategy */
   scoreWeights?: ScoreWeights;
+
+  /** Verification cone options */
+  coneOptions?: ConeOptions;
 
   /** Callback for progress updates */
   onProgress?: (message: string) => void;

@@ -73,6 +73,23 @@ It also derives scoring signals:
 
 Candidates without `verifiedDelta` are ineligible for selection.
 
+### 5a) Verification Cone of Attention
+The verification cone is a dynamically chosen set of files that approximates the "cone of influence" of a candidate fix. The verifier measures error deltas over this cone, not just the files directly modified by the fix.
+
+Key insight: Instead of checking only modified files (too narrow for structural fixes) or the entire project (too slow), we check a dynamically chosen set that captures the most important downstream effects.
+
+Cone computation:
+- Base cone: `modifiedFiles ∪ filesWithErrors`
+- Expansion triggers: .d.ts files, core/shared paths, high-fanout modules, type definitions
+- When expanded: includes reverse dependencies of modified files
+
+Properties:
+- Both "before" and "after" diagnostics are computed over the same cone
+- Caching per-cone to avoid redundant type-checking
+- Configurable cone size limits for performance control
+
+This preserves the oracle property for deep type failures (polymorphism, generics, type propagation) while keeping performance acceptable on large projects.
+
 ### 6) Disposition Classifier
 Classifies each diagnostic after candidate generation + verification.
 

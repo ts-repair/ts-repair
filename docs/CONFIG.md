@@ -32,6 +32,26 @@ Schema:
 - scoreWeights.riskPenalty.medium: Penalty for medium-risk fixes.
 - scoreWeights.riskPenalty.high: Penalty for high-risk fixes.
 
+### coneOptions
+
+Options for the Verification Cone of Attention. The cone controls which files are included when measuring the effect of a candidate fix.
+
+Defaults:
+- maxConeSize: 50
+- enableExpansion: true
+- corePathPatterns: ["/types/", "/core/", "/shared/", "/common/", "/lib/", "/utils/", "/interfaces/", "/models/"]
+- typeHeavyExtensions: [".d.ts"]
+- sharedSymbolThreshold: 3
+- maxReverseDependencyDepth: 1
+
+Schema:
+- coneOptions.maxConeSize: Maximum number of files to include in the verification cone.
+- coneOptions.enableExpansion: Whether to enable adaptive cone expansion for structural fixes.
+- coneOptions.corePathPatterns: Path patterns that indicate "core" or "shared" code (triggers expansion).
+- coneOptions.typeHeavyExtensions: File extensions that indicate type-heavy files (triggers expansion).
+- coneOptions.sharedSymbolThreshold: Minimum importers to trigger expansion.
+- coneOptions.maxReverseDependencyDepth: Maximum depth for reverse dependency traversal.
+
 ## Notes
 
 - Scoring uses: resolvedWeight - (introducedWeight * K) - (editSize * alpha) - riskPenalty.

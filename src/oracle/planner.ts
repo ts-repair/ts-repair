@@ -21,6 +21,16 @@ import type {
   FixDependencies,
 } from "../output/types.js";
 import { createBudgetLogger, createNoopLogger, type BudgetLogger } from "./logger.js";
+import {
+  computeVerificationCone,
+  buildReverseDependencyGraph,
+  ScopedDiagnosticsCache,
+  getDiagnosticsForCone,
+  DEFAULT_CONE_OPTIONS,
+  type ConeOptions,
+  type ConeContext,
+  type VerificationCone,
+} from "./cone.js";
 
 // ============================================================================
 // Scoring Strategy
@@ -150,10 +160,10 @@ export interface VerificationResult {
   /** Did the fix eliminate the target diagnostic? */
   targetFixed: boolean;
 
-  /** Error count before the fix */
+  /** Error count before the fix (scoped to verification cone) */
   errorsBefore: number;
 
-  /** Error count after the fix */
+  /** Error count after the fix (scoped to verification cone) */
   errorsAfter: number;
 
   /** Net change (positive = good) */
@@ -170,6 +180,9 @@ export interface VerificationResult {
 
   /** Total edit size for the fix (for weighted strategy) */
   editSize: number;
+
+  /** The verification cone used for this result */
+  cone?: VerificationCone;
 }
 
 function diagnosticKey(diagnostic: ts.Diagnostic): string {
@@ -248,17 +261,154 @@ export function resetVerifyTiming() {
 }
 
 /**
- * Speculatively apply a fix and measure the diagnostic delta.
+ * Context for verification with cone support
+ */
+interface VerificationContext {
+  /** TypeScript host */
+  host: TypeScriptHost;
+
+  /** The diagnostic being fixed */
+  diagnostic: ts.Diagnostic;
+
+  /** The fix to verify */
+  fix: ts.CodeFixAction;
+
+  /** Files that currently have errors */
+  filesWithErrors: Set<string>;
+
+  /** All current diagnostics (for cone context) */
+  currentDiagnostics: ts.Diagnostic[];
+
+  /** Cone options */
+  coneOptions: ConeOptions;
+
+  /** Reverse dependency graph (optional, for cone expansion) */
+  reverseDeps?: Map<string, Set<string>>;
+
+  /** Scoped diagnostics cache for "before" state */
+  scopedDiagnosticsCache?: ScopedDiagnosticsCache;
+}
+
+/**
+ * Speculatively apply a fix and measure the diagnostic delta using verification cone.
  *
- * Uses focused verification: only checks filesWithErrors + files modified by the fix,
- * rather than the entire project. This is much faster for large projects.
+ * Uses the "verification cone of attention" to determine which files to check.
+ * Both before and after diagnostics are computed over the same cone to ensure
+ * correct comparison.
+ *
+ * The cone is: modifiedFiles ∪ filesWithErrors, with optional expansion for
+ * structural fixes that may have broader impact.
  *
  * Performance optimizations:
- * 1. Accepts pre-computed diagnostic keys to avoid repeated flattenDiagnosticMessageText() calls
- * 2. Uses Set-based O(1) lookups instead of O(n*m) .some() scans
- * 3. Only checks modified files, not all files with errors
+ * 1. Scoped diagnostics cache to avoid redundant type-checking
+ * 2. Pre-computed diagnostic keys for O(1) lookups
+ * 3. Adaptive cone expansion based on fix characteristics
  */
-function verify(
+function verify(ctx: VerificationContext): VerificationResult {
+  const {
+    host,
+    diagnostic,
+    fix,
+    filesWithErrors,
+    currentDiagnostics,
+    coneOptions,
+    reverseDeps,
+    scopedDiagnosticsCache,
+  } = ctx;
+
+  const vfs = host.getVFS();
+  const snapshot = vfs.snapshot();
+
+  // Get files modified by this fix
+  const modifiedFiles = getFilesModifiedByFix(fix);
+
+  // Compute the verification cone for this fix
+  // The cone is: modifiedFiles ∪ filesWithErrors (with optional expansion)
+  const coneContext: ConeContext = {
+    modifiedFiles,
+    filesWithErrors,
+    currentDiagnostics,
+    host,
+    reverseDeps,
+  };
+  const cone = computeVerificationCone(coneContext, coneOptions);
+
+  // Track files checked
+  verifyTiming.totalFilesChecked += cone.files.size;
+
+  // Get "before" diagnostics scoped to this specific cone
+  // This is cached to avoid redundant type-checking for the same cone
+  const beforeScopedDiagnostics = getDiagnosticsForCone(host, cone, scopedDiagnosticsCache);
+  const beforeScopedKeysArray = beforeScopedDiagnostics.map(diagnosticKey);
+  const beforeScopedKeys = new Set(beforeScopedKeysArray);
+  const errorsBefore = beforeScopedDiagnostics.length;
+
+  // Apply the fix
+  const t0 = performance.now();
+  host.applyFix(fix);
+  verifyTiming.applyFix += performance.now() - t0;
+
+  // Re-check diagnostics scoped to the same cone (after applying fix)
+  // Note: Don't use cache here since VFS state has changed
+  const t1 = performance.now();
+  const diagnosticsAfter = host.getDiagnosticsForFiles(cone.files);
+  verifyTiming.getDiagnostics += performance.now() - t1;
+  const errorsAfter = diagnosticsAfter.length;
+
+  // Compute keys once per diagnostic
+  const afterKeysArray = diagnosticsAfter.map(diagnosticKey);
+  const afterKeys = new Set(afterKeysArray);
+
+  // Check if target diagnostic was fixed using O(1) Set lookup
+  const targetKey = diagnosticKey(diagnostic);
+  const targetFixed = !afterKeys.has(targetKey);
+
+  // Find new diagnostics using pre-computed keys (O(n) instead of O(n*m))
+  const newDiagnostics = diagnosticsAfter.filter(
+    (_, i) => !beforeScopedKeys.has(afterKeysArray[i])
+  );
+
+  // Find resolved diagnostics using pre-computed keys
+  const resolvedDiagnostics = beforeScopedDiagnostics.filter(
+    (_, i) => !afterKeys.has(beforeScopedKeysArray[i])
+  );
+
+  // Calculate weighted scores for weighted strategy
+  const resolvedWeight = resolvedDiagnostics.reduce(
+    (sum, d) => sum + diagnosticWeight(d),
+    0
+  );
+  const introducedWeight = newDiagnostics.reduce(
+    (sum, d) => sum + diagnosticWeight(d),
+    0
+  );
+  const editSize = computeEditSize(fix);
+
+  // Restore VFS and notify host about only the files that were modified
+  const t2 = performance.now();
+  vfs.restore(snapshot);
+  host.notifySpecificFilesChanged(modifiedFiles);
+  verifyTiming.restore += performance.now() - t2;
+  verifyTiming.count++;
+
+  return {
+    targetFixed,
+    errorsBefore,
+    errorsAfter,
+    delta: errorsBefore - errorsAfter,
+    newDiagnostics,
+    resolvedWeight,
+    introducedWeight,
+    editSize,
+    cone,
+  };
+}
+
+/**
+ * Legacy verify function for backward compatibility (used in classifyRemaining).
+ * Uses a narrow cone (modified files only) for classification.
+ */
+function verifyLegacy(
   host: TypeScriptHost,
   diagnostic: ts.Diagnostic,
   fix: ts.CodeFixAction,
@@ -270,9 +420,7 @@ function verify(
   const snapshot = vfs.snapshot();
   const errorsBefore = diagnosticsBefore.length;
 
-  // OPTIMIZATION: Only check the modified files, not all files with errors
-  // The full check happens at the end of planning anyway.
-  // This gives us a fast approximation during verification.
+  // Use narrow cone (modified files only) for classification
   const filesToCheck = getFilesModifiedByFix(fix);
 
   // Track files checked
@@ -289,8 +437,7 @@ function verify(
   verifyTiming.getDiagnostics += performance.now() - t1;
   const errorsAfter = diagnosticsAfter.length;
 
-  // OPTIMIZATION: Compute keys once per diagnostic (diagnosticKey calls flattenDiagnosticMessageText)
-  // Store as array so we can reuse by index without recomputing
+  // Compute keys once per diagnostic
   const afterKeysArray = diagnosticsAfter.map(diagnosticKey);
   const afterKeys = new Set(afterKeysArray);
   const actualBeforeKeys = beforeKeys ?? new Set(diagnosticsBefore.map(diagnosticKey));
@@ -299,7 +446,7 @@ function verify(
   const targetKey = diagnosticKey(diagnostic);
   const targetFixed = !afterKeys.has(targetKey);
 
-  // Find new diagnostics using pre-computed keys (O(n) instead of O(n*m))
+  // Find new diagnostics using pre-computed keys
   const newDiagnostics = diagnosticsAfter.filter(
     (_, i) => !actualBeforeKeys.has(afterKeysArray[i])
   );
@@ -321,7 +468,6 @@ function verify(
   const editSize = computeEditSize(fix);
 
   // Restore VFS and notify host about only the files that were modified
-  // This preserves LanguageService cache for unmodified files
   const t2 = performance.now();
   vfs.restore(snapshot);
   const modifiedFiles = getFilesModifiedByFix(fix);
@@ -596,6 +742,9 @@ export interface PlanOptions {
   /** Score weights for weighted scoring strategy */
   scoreWeights: ScoreWeights;
 
+  /** Verification cone options */
+  coneOptions: ConeOptions;
+
   /** Callback for progress updates */
   onProgress?: (message: string) => void;
 
@@ -612,6 +761,7 @@ const DEFAULT_OPTIONS: PlanOptions = {
   maxIterations: 50,
   scoringStrategy: "delta",
   scoreWeights: DEFAULT_SCORE_WEIGHTS,
+  coneOptions: DEFAULT_CONE_OPTIONS,
 };
 
 /**
@@ -643,9 +793,16 @@ export function plan(
         ...options.scoreWeights?.riskPenalty,
       },
     },
+    coneOptions: {
+      ...DEFAULT_OPTIONS.coneOptions,
+      ...options.coneOptions,
+    },
   };
   const host = createTypeScriptHost(configPath);
   const logger = opts.logger ?? createNoopLogger();
+
+  // Create scoped diagnostics cache for cone-aware verification
+  const scopedDiagnosticsCache = new ScopedDiagnosticsCache(100);
 
   const steps: VerifiedFix[] = [];
   let fixId = 0;
@@ -716,6 +873,16 @@ export function plan(
   opts.onProgress?.(`Starting with ${initialErrors} errors in ${filesWithErrors.size} files`);
   opts.onProgress?.(`[timing] Initial getDiagnostics: ${timing.initialDiagnostics.toFixed(0)}ms`);
 
+  // Build reverse dependency graph for cone expansion (optional, can be expensive)
+  // Only build if we have errors to fix and expansion is enabled
+  let reverseDeps: Map<string, Set<string>> | undefined;
+  if (initialErrors > 0 && opts.coneOptions.enableExpansion) {
+    const t = performance.now();
+    reverseDeps = buildReverseDependencyGraph(host);
+    const reverseDepsTime = performance.now() - t;
+    opts.onProgress?.(`[timing] Built reverse dependency graph: ${reverseDepsTime.toFixed(0)}ms`);
+  }
+
   let iteration = 0;
 
   // Track current diagnostics (updated via focused checking)
@@ -733,10 +900,9 @@ export function plan(
       `Iteration ${iteration}: ${currentDiagnostics.length} errors in ${filesWithErrors.size} files`
     );
 
-    // OPTIMIZATION: Pre-compute diagnostic keys once per iteration
-    // Avoids repeated flattenDiagnosticMessageText() calls in verify()
-    const currentDiagnosticKeysArray = currentDiagnostics.map(diagnosticKey);
-    const currentDiagnosticKeys = new Set(currentDiagnosticKeysArray);
+    // Clear the scoped diagnostics cache at the start of each iteration
+    // since the VFS state changes after committing a fix
+    scopedDiagnosticsCache.clear();
 
     // Find the best fix among all candidates
     let bestFix: {
@@ -845,7 +1011,17 @@ export function plan(
         });
 
         const verifyStart = performance.now();
-        const result = verify(host, diagnostic, fix, currentDiagnostics, currentDiagnosticKeys, currentDiagnosticKeysArray);
+        const verifyCtx: VerificationContext = {
+          host,
+          diagnostic,
+          fix,
+          filesWithErrors,
+          currentDiagnostics,
+          coneOptions: opts.coneOptions,
+          reverseDeps,
+          scopedDiagnosticsCache,
+        };
+        const result = verify(verifyCtx);
         timing.verifications += performance.now() - verifyStart;
         timing.verificationCount++;
         candidatesVerified++;
@@ -1089,7 +1265,7 @@ function classifySingleDiagnostic(
   let validFixCount = 0;
 
   for (const fix of fixes.slice(0, opts.maxCandidates)) {
-    const result = verify(host, diagnostic, fix, allDiagnostics, diagnosticKeys, diagnosticKeysArray);
+    const result = verifyLegacy(host, diagnostic, fix, allDiagnostics, diagnosticKeys, diagnosticKeysArray);
     const risk = assessRisk(fix.fixName);
 
     // Skip high-risk fixes if not allowed
@@ -1213,6 +1389,10 @@ export function repair(
         ...DEFAULT_SCORE_WEIGHTS.riskPenalty,
         ...request.scoreWeights?.riskPenalty,
       },
+    },
+    coneOptions: {
+      ...DEFAULT_CONE_OPTIONS,
+      ...request.coneOptions,
     },
     onProgress: request.onProgress,
     logger,
