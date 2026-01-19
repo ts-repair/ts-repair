@@ -290,6 +290,9 @@ export function createIncrementalTypeScriptHost(configPath: string): TypeScriptH
   const fileNames = parsed.fileNames;
   const options = parsed.options;
 
+  // Set for O(1) file membership checks (instead of array.includes which is O(n))
+  const fileNamesSet = new Set(fileNames);
+
   // Track per-file versions for LanguageService
   const fileVersions = new Map<string, number>();
   for (const fileName of fileNames) {
@@ -424,7 +427,7 @@ export function createIncrementalTypeScriptHost(configPath: string): TypeScriptH
       // Get syntactic diagnostics (parsing errors)
       const program = builderProgram.getProgram();
       for (const sourceFile of program.getSourceFiles()) {
-        if (fileNames.includes(sourceFile.fileName)) {
+        if (fileNamesSet.has(sourceFile.fileName)) {
           diagnostics.push(...program.getSyntacticDiagnostics(sourceFile));
         }
       }
@@ -436,7 +439,7 @@ export function createIncrementalTypeScriptHost(configPath: string): TypeScriptH
         if (result.result) {
           // Only include diagnostics from project files (not declaration files)
           for (const diag of result.result) {
-            if (diag.file && fileNames.includes(diag.file.fileName)) {
+            if (diag.file && fileNamesSet.has(diag.file.fileName)) {
               diagnostics.push(diag);
             }
           }
