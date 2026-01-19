@@ -8,6 +8,7 @@
 import ts from "typescript";
 import {
   createTypeScriptHost,
+  createIncrementalTypeScriptHost,
   toDiagnosticRef,
   toFileChanges,
   type TypeScriptHost,
@@ -552,6 +553,13 @@ export interface PlanOptions {
   /** Score weights for weighted scoring strategy */
   scoreWeights: ScoreWeights;
 
+  /**
+   * Use incremental type checking for faster verification.
+   * When true, uses TypeScript's BuilderProgram which only re-checks
+   * files affected by each change. Much faster for large projects.
+   */
+  incremental: boolean;
+
   /** Callback for progress updates */
   onProgress?: (message: string) => void;
 
@@ -568,6 +576,7 @@ const DEFAULT_OPTIONS: PlanOptions = {
   maxIterations: 50,
   scoringStrategy: "delta",
   scoreWeights: DEFAULT_SCORE_WEIGHTS,
+  incremental: false, // Opt-in: enable for large projects (100+ errors) for faster verification
 };
 
 /**
@@ -600,7 +609,9 @@ export function plan(
       },
     },
   };
-  const host = createTypeScriptHost(configPath);
+  const host = opts.incremental
+    ? createIncrementalTypeScriptHost(configPath)
+    : createTypeScriptHost(configPath);
   const logger = opts.logger ?? createNoopLogger();
 
   const steps: VerifiedFix[] = [];
@@ -978,6 +989,7 @@ export function repair(
         ...request.scoreWeights?.riskPenalty,
       },
     },
+    incremental: request.incremental ?? false,
     logger,
   });
 }

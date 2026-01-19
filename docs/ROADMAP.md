@@ -170,7 +170,7 @@ Optimize memory usage and verification speed for large projects (1000+ errors).
 | Component | Status | Priority | Notes |
 |-----------|--------|----------|-------|
 | Copy-on-write VFS snapshots | ✅ Done | **High** | Only copy files that change, not entire Map |
-| BuilderProgram for verification | 📋 Planned | **High** | Incremental re-checking via TypeScript's builder APIs |
+| BuilderProgram for verification | ✅ Done | **High** | Incremental re-checking via TypeScript's builder APIs |
 
 **Copy-on-write VFS:**
 
@@ -437,7 +437,7 @@ ts-repair/
 | Phase 2.7 | ✅ Done | Scoring function (delta + weighted) |
 | Phase 3 | ✅ Done | Classification |
 | Phase 4 | ✅ Done | Dependency metadata + batching |
-| Phase 4.5 | 🚧 In Progress | Performance optimizations (COW VFS, incremental) |
+| Phase 4.5 | ✅ Done | Performance optimizations (COW VFS, incremental) |
 | Phase 5 | 📋 Planned | Solver (if needed) |
 | Phase 6 | ✅ Done | Agent integration (MCP + Skills) |
 | Phase 7 | After benchmarks | Protocol specification |

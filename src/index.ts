@@ -29,8 +29,10 @@ export {
 
 // Low-level API (for advanced use)
 export { VirtualFS } from "./oracle/vfs.js";
+export type { VFSSnapshot } from "./oracle/vfs.js";
 export {
   createTypeScriptHost,
+  createIncrementalTypeScriptHost,
   toDiagnosticRef,
   toFileChanges,
 } from "./oracle/typescript.js";

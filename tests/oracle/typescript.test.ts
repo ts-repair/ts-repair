@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import {
   createTypeScriptHost,
+  createIncrementalTypeScriptHost,
   toDiagnosticRef,
   toFileChanges,
   type TypeScriptHost,
@@ -409,5 +410,180 @@ describe("toFileChanges", () => {
 
     const changes = toFileChanges(mockFix);
     expect(changes).toHaveLength(0);
+  });
+});
+
+describe("createIncrementalTypeScriptHost", () => {
+  describe("initialization", () => {
+    it("creates host from valid tsconfig.json", () => {
+      const configPath = path.join(FIXTURES_DIR, "no-errors/tsconfig.json");
+      const host = createIncrementalTypeScriptHost(configPath);
+
+      expect(host).toBeDefined();
+      expect(typeof host.getDiagnostics).toBe("function");
+      expect(typeof host.getCodeFixes).toBe("function");
+      expect(typeof host.applyFix).toBe("function");
+      expect(typeof host.notifyFileChanged).toBe("function");
+    });
+
+    it("throws on invalid tsconfig path", () => {
+      expect(() => {
+        createIncrementalTypeScriptHost("/nonexistent/tsconfig.json");
+      }).toThrow();
+    });
+  });
+
+  describe("getDiagnostics", () => {
+    it("returns empty array for error-free project", () => {
+      const configPath = path.join(FIXTURES_DIR, "no-errors/tsconfig.json");
+      const host = createIncrementalTypeScriptHost(configPath);
+
+      const diagnostics = host.getDiagnostics();
+      expect(diagnostics).toHaveLength(0);
+    });
+
+    it("returns diagnostics for project with errors", () => {
+      const configPath = path.join(FIXTURES_DIR, "missing-import/tsconfig.json");
+      const host = createIncrementalTypeScriptHost(configPath);
+
+      const diagnostics = host.getDiagnostics();
+      expect(diagnostics.length).toBeGreaterThan(0);
+    });
+
+    it("returns only errors from project files (not declaration files)", () => {
+      const configPath = path.join(FIXTURES_DIR, "missing-import/tsconfig.json");
+      const host = createIncrementalTypeScriptHost(configPath);
+      const fileNames = host.getFileNames();
+
+      const diagnostics = host.getDiagnostics();
+      for (const d of diagnostics) {
+        expect(d.file).toBeDefined();
+        expect(fileNames).toContain(d.file!.fileName);
+      }
+    });
+
+    it("caches diagnostics when no changes occur", () => {
+      const configPath = path.join(FIXTURES_DIR, "missing-import/tsconfig.json");
+      const host = createIncrementalTypeScriptHost(configPath);
+
+      const diagnostics1 = host.getDiagnostics();
+      const diagnostics2 = host.getDiagnostics();
+
+      // Should return same cached array
+      expect(diagnostics1).toBe(diagnostics2);
+    });
+
+    it("invalidates cache when file changes", () => {
+      const configPath = path.join(FIXTURES_DIR, "no-errors/tsconfig.json");
+      const host = createIncrementalTypeScriptHost(configPath);
+
+      const diagnostics1 = host.getDiagnostics();
+      expect(diagnostics1).toHaveLength(0);
+
+      // Introduce an error
+      const vfs = host.getVFS();
+      const fileName = host.getFileNames()[0];
+      vfs.write(fileName, "const x: number = 'string';");
+      host.notifyFileChanged!(fileName);
+
+      const diagnostics2 = host.getDiagnostics();
+      expect(diagnostics2.length).toBeGreaterThan(0);
+      expect(diagnostics1).not.toBe(diagnostics2);
+    });
+  });
+
+  describe("getCodeFixes", () => {
+    it("returns fixes for diagnostic with available fixes", () => {
+      const configPath = path.join(FIXTURES_DIR, "missing-import/tsconfig.json");
+      const host = createIncrementalTypeScriptHost(configPath);
+
+      const diagnostics = host.getDiagnostics();
+      expect(diagnostics.length).toBeGreaterThan(0);
+
+      const fixes = host.getCodeFixes(diagnostics[0]);
+      expect(fixes.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("applyFix", () => {
+    it("applies fix and updates diagnostics", () => {
+      const configPath = path.join(FIXTURES_DIR, "missing-import/tsconfig.json");
+      const host = createIncrementalTypeScriptHost(configPath);
+
+      const diagnosticsBefore = host.getDiagnostics();
+      const fix = host.getCodeFixes(diagnosticsBefore[0])[0];
+
+      if (fix) {
+        host.applyFix(fix);
+        const diagnosticsAfter = host.getDiagnostics();
+        expect(diagnosticsAfter.length).toBeLessThanOrEqual(diagnosticsBefore.length);
+      }
+    });
+
+    it("skips files not in VFS", () => {
+      const configPath = path.join(FIXTURES_DIR, "no-errors/tsconfig.json");
+      const host = createIncrementalTypeScriptHost(configPath);
+
+      // Create a mock fix that tries to edit a file not in VFS
+      const mockFix: ts.CodeFixAction = {
+        fixName: "test",
+        description: "Test fix",
+        changes: [
+          {
+            fileName: "/nonexistent/file.ts",
+            textChanges: [{ span: { start: 0, length: 0 }, newText: "test" }],
+          },
+        ],
+      };
+
+      // Should not throw
+      expect(() => host.applyFix(mockFix)).not.toThrow();
+    });
+  });
+
+  describe("reset", () => {
+    it("restores VFS to original state", () => {
+      const configPath = path.join(FIXTURES_DIR, "no-errors/tsconfig.json");
+      const host = createIncrementalTypeScriptHost(configPath);
+      const vfs = host.getVFS();
+      const fileName = host.getFileNames()[0];
+      const originalContent = vfs.read(fileName);
+
+      // Modify a file
+      vfs.write(fileName, "const x: number = 'string';");
+      expect(vfs.read(fileName)).not.toBe(originalContent);
+
+      // Reset
+      host.reset();
+      expect(vfs.read(fileName)).toBe(originalContent);
+    });
+  });
+
+  describe("compatibility with standard host", () => {
+    it("produces same diagnostics as standard host for error-free project", () => {
+      const configPath = path.join(FIXTURES_DIR, "no-errors/tsconfig.json");
+      const standardHost = createTypeScriptHost(configPath);
+      const incrementalHost = createIncrementalTypeScriptHost(configPath);
+
+      expect(standardHost.getDiagnostics().length).toBe(
+        incrementalHost.getDiagnostics().length
+      );
+    });
+
+    it("produces same diagnostics as standard host for project with errors", () => {
+      const configPath = path.join(FIXTURES_DIR, "missing-import/tsconfig.json");
+      const standardHost = createTypeScriptHost(configPath);
+      const incrementalHost = createIncrementalTypeScriptHost(configPath);
+
+      const standardDiags = standardHost.getDiagnostics();
+      const incrementalDiags = incrementalHost.getDiagnostics();
+
+      expect(standardDiags.length).toBe(incrementalDiags.length);
+
+      // Check that error codes match
+      const standardCodes = standardDiags.map((d) => d.code).sort();
+      const incrementalCodes = incrementalDiags.map((d) => d.code).sort();
+      expect(standardCodes).toEqual(incrementalCodes);
+    });
   });
 });

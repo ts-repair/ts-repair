@@ -155,6 +155,19 @@ export interface RepairRequest {
 
   /** Scoring weights for weighted strategy */
   scoreWeights?: ScoreWeights;
+
+  /**
+   * Use incremental type checking for faster verification (default: false)
+   *
+   * When enabled, uses TypeScript's BuilderProgram which only re-checks
+   * files affected by each change. Recommended for large projects with
+   * 100+ errors where the initial setup cost is offset by faster
+   * subsequent verifications.
+   *
+   * For small projects or projects with few errors, the standard mode
+   * is typically faster due to lower setup overhead.
+   */
+  incremental?: boolean;
 }
 
 export interface RepairResponse {
