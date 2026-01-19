@@ -6,7 +6,7 @@
     "remainingCount": 0,
     "budget": {
       "candidatesGenerated": 2,
-      "candidatesVerified": 2,
+      "candidatesVerified": 1,
       "verificationBudget": 500,
       "budgetExhausted": false
     }

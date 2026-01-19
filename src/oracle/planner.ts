@@ -231,7 +231,8 @@ function verify(
   host: TypeScriptHost,
   diagnostic: ts.Diagnostic,
   fix: ts.CodeFixAction,
-  diagnosticsBefore: ts.Diagnostic[]
+  diagnosticsBefore: ts.Diagnostic[],
+  beforeKeys?: Set<string>  // Optional pre-computed keys for efficiency
 ): VerificationResult {
   const vfs = host.getVFS();
   const snapshot = vfs.snapshot();
@@ -249,38 +250,26 @@ function verify(
   // Re-check (this is the only getDiagnostics call needed per verification)
   const diagnosticsAfter = host.getDiagnostics();
   const errorsAfter = diagnosticsAfter.length;
+
+  // Compute keys for Set-based lookups (O(1) instead of O(n) scans)
   const afterKeys = new Set(diagnosticsAfter.map(diagnosticKey));
+  const actualBeforeKeys = beforeKeys ?? new Set(diagnosticsBefore.map(diagnosticKey));
 
-  // Check if target diagnostic was fixed
-  // Note: We can't match by position because applying a fix may shift positions.
-  // Instead, match by file, code, and message text (which is stable).
-  const targetMessage = ts.flattenDiagnosticMessageText(
-    diagnostic.messageText,
-    " "
-  );
-  const targetFixed = !diagnosticsAfter.some(
-    (d) =>
-      d.file?.fileName === diagnostic.file?.fileName &&
-      d.code === diagnostic.code &&
-      ts.flattenDiagnosticMessageText(d.messageText, " ") === targetMessage
+  // Check if target diagnostic was fixed using Set lookup
+  const targetKey = diagnosticKey(diagnostic);
+  const targetFixed = !afterKeys.has(targetKey);
+
+  // Find new diagnostics using Set difference (O(n) instead of O(n*m))
+  const newDiagnostics = diagnosticsAfter.filter(
+    (d) => !actualBeforeKeys.has(diagnosticKey(d))
   );
 
-  // Find new diagnostics (introduced by this fix)
-  // Match by file, code, and message (not position, which may shift)
-  const newDiagnostics = diagnosticsAfter.filter((after) => {
-    const afterMessage = ts.flattenDiagnosticMessageText(after.messageText, " ");
-    return !diagnosticsBefore.some(
-      (before) =>
-        before.file?.fileName === after.file?.fileName &&
-        before.code === after.code &&
-        ts.flattenDiagnosticMessageText(before.messageText, " ") === afterMessage
-    );
-  });
+  // Find resolved diagnostics using Set difference
+  const resolvedDiagnostics = diagnosticsBefore.filter(
+    (d) => !afterKeys.has(diagnosticKey(d))
+  );
 
   // Calculate weighted scores for weighted strategy
-  const resolvedDiagnostics = diagnosticsBefore.filter(
-    (before) => !afterKeys.has(diagnosticKey(before))
-  );
   const resolvedWeight = resolvedDiagnostics.reduce(
     (sum, d) => sum + diagnosticWeight(d),
     0
@@ -642,9 +631,9 @@ export function plan(
   const verificationBudget = opts.maxVerifications;
   let budgetExhausted = false;
 
-  // Get initial error count
-  const initialDiagnostics = host.getDiagnostics();
-  const initialErrors = initialDiagnostics.length;
+  // Get initial diagnostics (reused for first iteration to avoid duplicate type-check)
+  let currentDiagnostics = host.getDiagnostics();
+  const initialErrors = currentDiagnostics.length;
 
   opts.onProgress?.(`Starting with ${initialErrors} errors`);
 
@@ -653,7 +642,11 @@ export function plan(
   mainLoop: while (iteration < opts.maxIterations) {
     iteration++;
 
-    const currentDiagnostics = host.getDiagnostics();
+    // On iteration 2+, refresh diagnostics (iteration 1 uses initialDiagnostics)
+    if (iteration > 1) {
+      currentDiagnostics = host.getDiagnostics();
+    }
+
     if (currentDiagnostics.length === 0) {
       opts.onProgress?.("All errors resolved!");
       break;
@@ -662,6 +655,9 @@ export function plan(
     opts.onProgress?.(
       `Iteration ${iteration}: ${currentDiagnostics.length} errors`
     );
+
+    // Pre-compute diagnostic keys for O(1) lookups during verification
+    const currentDiagnosticKeys = new Set(currentDiagnostics.map(diagnosticKey));
 
     // Find the best fix among all candidates
     let bestFix: {
@@ -756,7 +752,7 @@ export function plan(
           },
         });
 
-        const result = verify(host, diagnostic, fix, currentDiagnostics);
+        const result = verify(host, diagnostic, fix, currentDiagnostics, currentDiagnosticKeys);
         candidatesVerified++;
 
         logger.log({
@@ -811,6 +807,16 @@ export function plan(
             bestFix = { diagnostic, fix, result, risk, score: result.delta };
           }
         }
+
+        // Early exit: if this fix resolves ALL errors, no need to check more candidates
+        if (result.errorsAfter === 0) {
+          break;
+        }
+      }
+
+      // Early exit from diagnostic loop if we found a fix that resolves all errors
+      if (bestFix && bestFix.result.errorsAfter === 0) {
+        break;
       }
     }
 
@@ -905,6 +911,9 @@ function classifyRemaining(
 ): ClassifiedDiagnostic[] {
   const classified: ClassifiedDiagnostic[] = [];
 
+  // Pre-compute diagnostic keys for O(1) lookups during verification
+  const diagnosticKeys = new Set(diagnostics.map(diagnosticKey));
+
   for (const diagnostic of diagnostics) {
     const fixes = host.getCodeFixes(diagnostic);
     const ref = toDiagnosticRef(diagnostic);
@@ -924,7 +933,7 @@ function classifyRemaining(
     let validFixCount = 0;
 
     for (const fix of fixes.slice(0, opts.maxCandidates)) {
-      const result = verify(host, diagnostic, fix, diagnostics);
+      const result = verify(host, diagnostic, fix, diagnostics, diagnosticKeys);
       const risk = assessRisk(fix.fixName);
 
       // Skip high-risk fixes if not allowed
