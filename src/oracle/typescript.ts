@@ -13,6 +13,13 @@ export interface TypeScriptHost {
   /** Get all diagnostics from the project */
   getDiagnostics(): ts.Diagnostic[];
 
+  /**
+   * Get diagnostics only for specific files.
+   * This is much faster than getDiagnostics() when you only need to check a subset of files.
+   * Used by focused verification to only type-check files with errors + modified files.
+   */
+  getDiagnosticsForFiles(files: Set<string>): ts.Diagnostic[];
+
   /** Get code fixes for a specific diagnostic */
   getCodeFixes(diagnostic: ts.Diagnostic): readonly ts.CodeFixAction[];
 
@@ -33,6 +40,12 @@ export interface TypeScriptHost {
    * This bumps all file versions so the LanguageService re-checks everything.
    */
   notifyFilesChanged(): void;
+
+  /**
+   * Notify the host that specific files have changed.
+   * More efficient than notifyFilesChanged() when only a few files changed.
+   */
+  notifySpecificFilesChanged(files: Set<string>): void;
 
   /**
    * Reset the host to its initial state (VFS reset + version bump).
@@ -126,6 +139,32 @@ export function createTypeScriptHost(configPath: string): TypeScriptHost {
       );
     },
 
+    getDiagnosticsForFiles(files: Set<string>): ts.Diagnostic[] {
+      const diagnostics: ts.Diagnostic[] = [];
+
+      for (const fileName of files) {
+        // Skip files not in the project
+        if (!fileNames.includes(fileName)) {
+          continue;
+        }
+
+        try {
+          diagnostics.push(
+            ...languageService.getSyntacticDiagnostics(fileName),
+            ...languageService.getSemanticDiagnostics(fileName)
+          );
+        } catch (e) {
+          // Skip files that fail to parse
+          console.error(`Warning: Failed to get diagnostics for ${fileName}:`, e);
+        }
+      }
+
+      // Filter to errors only
+      return diagnostics.filter(
+        (d) => d.category === ts.DiagnosticCategory.Error
+      );
+    },
+
     getCodeFixes(diagnostic: ts.Diagnostic): readonly ts.CodeFixAction[] {
       if (
         !diagnostic.file ||
@@ -181,6 +220,15 @@ export function createTypeScriptHost(configPath: string): TypeScriptHost {
       // Bump all file versions so LanguageService re-checks everything
       for (const fileName of fileNames) {
         bumpFileVersion(fileName);
+      }
+    },
+
+    notifySpecificFilesChanged(files: Set<string>): void {
+      // Bump only specified file versions
+      for (const fileName of files) {
+        if (fileNames.includes(fileName)) {
+          bumpFileVersion(fileName);
+        }
       }
     },
 

@@ -699,6 +699,7 @@ function runRepair(global: GlobalOptions, args: string[]): void {
         maxVerifications: options.maxVerifications,
         maxCandidatesPerIteration: options.maxCandidatesPerIteration,
         scoringStrategy: options.scoringStrategy,
+        onProgress: global.verbose ? (msg) => console.error(msg) : undefined,
       },
       logger
     );

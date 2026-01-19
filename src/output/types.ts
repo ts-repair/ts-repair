@@ -155,6 +155,9 @@ export interface RepairRequest {
 
   /** Scoring weights for weighted strategy */
   scoreWeights?: ScoreWeights;
+
+  /** Callback for progress updates */
+  onProgress?: (message: string) => void;
 }
 
 export interface RepairResponse {

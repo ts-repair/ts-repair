@@ -135,8 +135,9 @@ describe("Efficiency Tests", () => {
       // Should stop immediately with no iterations needed
       expect(result.steps).toHaveLength(0);
 
-      // Should only have starting message
-      expect(messages.length).toBeLessThanOrEqual(2);
+      // Should only have starting message (plus timing messages)
+      const nonTimingMessages = messages.filter(m => !m.includes("[timing]"));
+      expect(nonTimingMessages.length).toBeLessThanOrEqual(2);
     });
 
     it("terminates within maxIterations", () => {

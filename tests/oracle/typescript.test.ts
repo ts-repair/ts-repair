@@ -110,7 +110,108 @@ describe("createTypeScriptHost", () => {
       const diagnostics = host.getDiagnostics();
       expect(diagnostics.length).toBeGreaterThanOrEqual(2);
     });
+  });
 
+  describe("getDiagnosticsForFiles", () => {
+    it("returns empty array when no files specified", () => {
+      const configPath = path.join(FIXTURES_DIR, "missing-import/tsconfig.json");
+      const host = createTypeScriptHost(configPath);
+
+      const diagnostics = host.getDiagnosticsForFiles(new Set());
+      expect(diagnostics).toHaveLength(0);
+    });
+
+    it("returns diagnostics only for specified files", () => {
+      const configPath = path.join(FIXTURES_DIR, "multiple-errors/tsconfig.json");
+      const host = createTypeScriptHost(configPath);
+
+      // Get all diagnostics first
+      const allDiagnostics = host.getDiagnostics();
+      expect(allDiagnostics.length).toBeGreaterThanOrEqual(2);
+
+      // Get file names with errors
+      const filesWithErrors = new Set<string>();
+      for (const d of allDiagnostics) {
+        if (d.file) {
+          filesWithErrors.add(d.file.fileName);
+        }
+      }
+
+      // Get diagnostics for just those files
+      const focusedDiagnostics = host.getDiagnosticsForFiles(filesWithErrors);
+
+      // Should return the same diagnostics since we're checking all files with errors
+      expect(focusedDiagnostics.length).toBe(allDiagnostics.length);
+    });
+
+    it("skips files not in the project", () => {
+      const configPath = path.join(FIXTURES_DIR, "missing-import/tsconfig.json");
+      const host = createTypeScriptHost(configPath);
+
+      // Try to get diagnostics for a non-existent file
+      const diagnostics = host.getDiagnosticsForFiles(new Set(["/nonexistent/file.ts"]));
+      expect(diagnostics).toHaveLength(0);
+    });
+
+    it("returns subset of diagnostics when checking partial files", () => {
+      const configPath = path.join(FIXTURES_DIR, "multiple-errors/tsconfig.json");
+      const host = createTypeScriptHost(configPath);
+
+      // Get all diagnostics
+      const allDiagnostics = host.getDiagnostics();
+      expect(allDiagnostics.length).toBeGreaterThanOrEqual(1);
+
+      // Find a single file with errors
+      const firstFileWithError = allDiagnostics.find(d => d.file)?.file?.fileName;
+      expect(firstFileWithError).toBeDefined();
+
+      if (firstFileWithError) {
+        const focusedDiagnostics = host.getDiagnosticsForFiles(new Set([firstFileWithError]));
+
+        // Should return diagnostics only for that file
+        for (const d of focusedDiagnostics) {
+          expect(d.file?.fileName).toBe(firstFileWithError);
+        }
+      }
+    });
+
+    it("returns same results as getDiagnostics when all files specified", () => {
+      const configPath = path.join(FIXTURES_DIR, "missing-import/tsconfig.json");
+      const host = createTypeScriptHost(configPath);
+
+      // Get all file names
+      const allFiles = new Set(host.getFileNames());
+
+      // Get diagnostics both ways
+      const allDiagnostics = host.getDiagnostics();
+      const focusedDiagnostics = host.getDiagnosticsForFiles(allFiles);
+
+      // Should be equivalent
+      expect(focusedDiagnostics.length).toBe(allDiagnostics.length);
+    });
+
+    it("reflects VFS changes like getDiagnostics", () => {
+      const configPath = path.join(FIXTURES_DIR, "no-errors/tsconfig.json");
+      const host = createTypeScriptHost(configPath);
+
+      const fileName = host.getFileNames()[0];
+      const filesSet = new Set([fileName]);
+
+      // Initially no errors
+      expect(host.getDiagnosticsForFiles(filesSet)).toHaveLength(0);
+
+      // Introduce an error
+      const vfs = host.getVFS();
+      vfs.write(fileName, "const x: number = 'string';");
+      host.notifyFilesChanged();
+
+      // Now should have errors
+      const diagnostics = host.getDiagnosticsForFiles(filesSet);
+      expect(diagnostics.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("getDiagnostics (continued)", () => {
     it("reflects VFS changes on subsequent calls", () => {
       const configPath = path.join(FIXTURES_DIR, "missing-import/tsconfig.json");
       const host = createTypeScriptHost(configPath);

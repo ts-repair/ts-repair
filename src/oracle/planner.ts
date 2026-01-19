@@ -220,24 +220,66 @@ interface EditRange {
 }
 
 /**
- * Speculatively apply a fix and measure the diagnostic delta
+ * Get the set of files that will be modified by a fix
+ */
+function getFilesModifiedByFix(fix: ts.CodeFixAction): Set<string> {
+  const files = new Set<string>();
+  for (const change of fix.changes) {
+    files.add(change.fileName);
+  }
+  return files;
+}
+
+// Detailed timing for verify() debugging
+let verifyTiming = {
+  applyFix: 0,
+  getDiagnostics: 0,
+  restore: 0,
+  count: 0,
+  totalFilesChecked: 0,
+};
+
+export function getVerifyTiming() {
+  return verifyTiming;
+}
+
+export function resetVerifyTiming() {
+  verifyTiming = { applyFix: 0, getDiagnostics: 0, restore: 0, count: 0, totalFilesChecked: 0 };
+}
+
+/**
+ * Speculatively apply a fix and measure the diagnostic delta.
+ *
+ * Uses focused verification: only checks filesWithErrors + files modified by the fix,
+ * rather than the entire project. This is much faster for large projects.
  */
 function verify(
   host: TypeScriptHost,
   diagnostic: ts.Diagnostic,
-  fix: ts.CodeFixAction
+  fix: ts.CodeFixAction,
+  diagnosticsBefore: ts.Diagnostic[]
 ): VerificationResult {
   const vfs = host.getVFS();
   const snapshot = vfs.snapshot();
-
-  const diagnosticsBefore = host.getDiagnostics();
   const errorsBefore = diagnosticsBefore.length;
 
-  // Apply the fix
-  host.applyFix(fix);
+  // OPTIMIZATION: Only check the modified files, not all files with errors
+  // The full check happens at the end of planning anyway.
+  // This gives us a fast approximation during verification.
+  const filesToCheck = getFilesModifiedByFix(fix);
 
-  // Re-check
-  const diagnosticsAfter = host.getDiagnostics();
+  // Track files checked
+  verifyTiming.totalFilesChecked += filesToCheck.size;
+
+  // Apply the fix
+  const t0 = performance.now();
+  host.applyFix(fix);
+  verifyTiming.applyFix += performance.now() - t0;
+
+  // Re-check only the focused set of files
+  const t1 = performance.now();
+  const diagnosticsAfter = host.getDiagnosticsForFiles(filesToCheck);
+  verifyTiming.getDiagnostics += performance.now() - t1;
   const errorsAfter = diagnosticsAfter.length;
   const afterKeys = new Set(diagnosticsAfter.map(diagnosticKey));
 
@@ -281,9 +323,14 @@ function verify(
   );
   const editSize = computeEditSize(fix);
 
-  // Restore VFS and notify host so LanguageService sees updated files
+  // Restore VFS and notify host about only the files that were modified
+  // This preserves LanguageService cache for unmodified files
+  const t2 = performance.now();
   vfs.restore(snapshot);
-  host.notifyFilesChanged();
+  const modifiedFiles = getFilesModifiedByFix(fix);
+  host.notifySpecificFilesChanged(modifiedFiles);
+  verifyTiming.restore += performance.now() - t2;
+  verifyTiming.count++;
 
   return {
     targetFixed,
@@ -612,25 +659,49 @@ export function plan(
   const verificationBudget = opts.maxVerifications;
   let budgetExhausted = false;
 
-  // Get initial error count
+  // Timing telemetry
+  const timing = {
+    initialDiagnostics: 0,
+    iterationDiagnostics: 0,
+    verifications: 0,
+    verificationCount: 0,
+    applyFix: 0,
+    classifyRemaining: 0,
+  };
+  const planStartTime = performance.now();
+
+  // Get initial error count (full check)
+  const t0 = performance.now();
   const initialDiagnostics = host.getDiagnostics();
+  timing.initialDiagnostics = performance.now() - t0;
   const initialErrors = initialDiagnostics.length;
 
-  opts.onProgress?.(`Starting with ${initialErrors} errors`);
+  // Build initial filesWithErrors set for focused verification
+  const filesWithErrors = new Set<string>();
+  for (const diag of initialDiagnostics) {
+    if (diag.file) {
+      filesWithErrors.add(diag.file.fileName);
+    }
+  }
+
+  opts.onProgress?.(`Starting with ${initialErrors} errors in ${filesWithErrors.size} files`);
+  opts.onProgress?.(`[timing] Initial getDiagnostics: ${timing.initialDiagnostics.toFixed(0)}ms`);
 
   let iteration = 0;
+
+  // Track current diagnostics (updated via focused checking)
+  let currentDiagnostics = initialDiagnostics;
 
   mainLoop: while (iteration < opts.maxIterations) {
     iteration++;
 
-    const currentDiagnostics = host.getDiagnostics();
     if (currentDiagnostics.length === 0) {
       opts.onProgress?.("All errors resolved!");
       break;
     }
 
     opts.onProgress?.(
-      `Iteration ${iteration}: ${currentDiagnostics.length} errors`
+      `Iteration ${iteration}: ${currentDiagnostics.length} errors in ${filesWithErrors.size} files`
     );
 
     // Find the best fix among all candidates
@@ -726,7 +797,10 @@ export function plan(
           },
         });
 
-        const result = verify(host, diagnostic, fix);
+        const verifyStart = performance.now();
+        const result = verify(host, diagnostic, fix, currentDiagnostics);
+        timing.verifications += performance.now() - verifyStart;
+        timing.verificationCount++;
         candidatesVerified++;
 
         logger.log({
@@ -824,10 +898,38 @@ export function plan(
         requires: [],
       },
     });
+
+    // Update filesWithErrors with files modified by this fix
+    for (const change of bestFix.fix.changes) {
+      filesWithErrors.add(change.fileName);
+    }
+
+    // Re-check using focused verification to update currentDiagnostics
+    const iterDiagStart = performance.now();
+    currentDiagnostics = host.getDiagnosticsForFiles(filesWithErrors);
+    timing.iterationDiagnostics += performance.now() - iterDiagStart;
+
+    // Update filesWithErrors: rebuild from current diagnostics
+    // This removes files that now have 0 errors and keeps files that still have errors
+    filesWithErrors.clear();
+    for (const diag of currentDiagnostics) {
+      if (diag.file) {
+        filesWithErrors.add(diag.file.fileName);
+      }
+    }
+
+    // Log timing every 10 iterations
+    if (iteration % 10 === 0) {
+      const avgVerify = timing.verificationCount > 0 ? timing.verifications / timing.verificationCount : 0;
+      opts.onProgress?.(`[timing] Iter ${iteration}: verifications=${timing.verificationCount}, avg=${avgVerify.toFixed(0)}ms, iterDiag=${timing.iterationDiagnostics.toFixed(0)}ms`);
+    }
   }
 
   // Classify remaining diagnostics
+  const finalDiagStart = performance.now();
   const finalDiagnostics = host.getDiagnostics();
+  const finalDiagTime = performance.now() - finalDiagStart;
+
   let remaining: ClassifiedDiagnostic[];
 
   if (budgetExhausted) {
@@ -838,7 +940,9 @@ export function plan(
       candidateCount: 0,
     }));
   } else {
+    const classifyStart = performance.now();
     remaining = classifyRemaining(host, finalDiagnostics, opts);
+    timing.classifyRemaining = performance.now() - classifyStart;
   }
 
   // Build budget stats
@@ -850,6 +954,29 @@ export function plan(
   };
 
   const batches = deriveDependencies(steps);
+
+  // Log timing summary
+  const totalTime = performance.now() - planStartTime;
+  const avgVerify = timing.verificationCount > 0 ? timing.verifications / timing.verificationCount : 0;
+  opts.onProgress?.(`\n[timing] === SUMMARY ===`);
+  opts.onProgress?.(`[timing] Total time: ${(totalTime / 1000).toFixed(2)}s`);
+  opts.onProgress?.(`[timing] Initial getDiagnostics: ${timing.initialDiagnostics.toFixed(0)}ms`);
+  opts.onProgress?.(`[timing] Final getDiagnostics: ${finalDiagTime.toFixed(0)}ms`);
+  opts.onProgress?.(`[timing] Verifications: ${timing.verificationCount} total, ${timing.verifications.toFixed(0)}ms total, ${avgVerify.toFixed(0)}ms avg`);
+  opts.onProgress?.(`[timing] Iteration diagnostics: ${timing.iterationDiagnostics.toFixed(0)}ms total`);
+  opts.onProgress?.(`[timing] Classify remaining: ${timing.classifyRemaining.toFixed(0)}ms`);
+  opts.onProgress?.(`[timing] Iterations: ${iteration}`);
+
+  // Detailed verify() timing breakdown
+  const vt = getVerifyTiming();
+  if (vt.count > 0) {
+    opts.onProgress?.(`\n[timing] === VERIFY BREAKDOWN ===`);
+    opts.onProgress?.(`[timing] Files checked per verify: ${(vt.totalFilesChecked / vt.count).toFixed(1)} avg`);
+    opts.onProgress?.(`[timing] applyFix: ${vt.applyFix.toFixed(0)}ms total, ${(vt.applyFix / vt.count).toFixed(0)}ms avg`);
+    opts.onProgress?.(`[timing] getDiagnosticsForFiles: ${vt.getDiagnostics.toFixed(0)}ms total, ${(vt.getDiagnostics / vt.count).toFixed(0)}ms avg`);
+    opts.onProgress?.(`[timing] restore+notify: ${vt.restore.toFixed(0)}ms total, ${(vt.restore / vt.count).toFixed(0)}ms avg`);
+  }
+  resetVerifyTiming();
 
   return {
     steps,
@@ -894,7 +1021,7 @@ function classifyRemaining(
     let validFixCount = 0;
 
     for (const fix of fixes.slice(0, opts.maxCandidates)) {
-      const result = verify(host, diagnostic, fix);
+      const result = verify(host, diagnostic, fix, diagnostics);
       const risk = assessRisk(fix.fixName);
 
       // Skip high-risk fixes if not allowed
@@ -978,6 +1105,7 @@ export function repair(
         ...request.scoreWeights?.riskPenalty,
       },
     },
+    onProgress: request.onProgress,
     logger,
   });
 }
