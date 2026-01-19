@@ -372,17 +372,30 @@ export function createIncrementalTypeScriptHost(configPath: string): TypeScriptH
     undefined  // No old builder initially
   );
 
-  // Cache for diagnostics - avoid recomputing when nothing changed
-  let cachedDiagnostics: ts.Diagnostic[] | null = null;
+  // Per-file diagnostic cache - allows incremental updates while returning full diagnostics
+  // Key: fileName, Value: array of diagnostics from that file
+  const diagnosticsPerFile = new Map<string, ts.Diagnostic[]>();
+
+  // Set of files that need rechecking (superset of changedFiles - includes dependents)
+  let filesToRecheck = new Set<string>();
+
+  // Whether we've done the initial full check
+  let initialCheckDone = false;
+
+  // Cached merged diagnostics (for returning same array when nothing changed)
+  let cachedMergedDiagnostics: ts.Diagnostic[] | null = null;
 
   /**
    * Rebuild the builder program incrementally.
    * Only re-checks files that changed and their dependents.
    */
   function rebuildProgram(): void {
-    if (changedFiles.size === 0 && cachedDiagnostics !== null) {
+    if (changedFiles.size === 0 && initialCheckDone) {
       return; // No changes, use cached diagnostics
     }
+
+    // Invalidate merged cache since files are changing
+    cachedMergedDiagnostics = null;
 
     // Clear source file cache for changed files
     for (const fileName of changedFiles) {
@@ -394,6 +407,9 @@ export function createIncrementalTypeScriptHost(configPath: string): TypeScriptH
       }
     }
 
+    // Remember which files were changed so we can track affected files
+    filesToRecheck = new Set(changedFiles);
+
     // Create new builder program from old (incremental)
     builderProgram = ts.createSemanticDiagnosticsBuilderProgram(
       fileNames,
@@ -403,7 +419,6 @@ export function createIncrementalTypeScriptHost(configPath: string): TypeScriptH
     );
 
     changedFiles.clear();
-    cachedDiagnostics = null;
   }
 
   // Instrumentation stats
@@ -418,40 +433,78 @@ export function createIncrementalTypeScriptHost(configPath: string): TypeScriptH
       stats.getDiagnosticsCalls++;
       rebuildProgram();
 
-      if (cachedDiagnostics !== null) {
-        return cachedDiagnostics;
+      // If no files need rechecking and we have cached data, return cached merged diagnostics
+      if (filesToRecheck.size === 0 && initialCheckDone && cachedMergedDiagnostics !== null) {
+        return cachedMergedDiagnostics;
       }
 
-      const diagnostics: ts.Diagnostic[] = [];
-
-      // Get syntactic diagnostics (parsing errors)
       const program = builderProgram.getProgram();
-      for (const sourceFile of program.getSourceFiles()) {
-        if (fileNamesSet.has(sourceFile.fileName)) {
-          diagnostics.push(...program.getSyntacticDiagnostics(sourceFile));
-        }
-      }
 
-      // Drain semantic diagnostics from builder (only affected files)
-      // This is the key optimization - it only checks files that need checking
-      let result: ts.AffectedFileResult<readonly ts.Diagnostic[]> | undefined;
-      while ((result = builderProgram.getSemanticDiagnosticsOfNextAffectedFile()) !== undefined) {
-        if (result.result) {
-          // Only include diagnostics from project files (not declaration files)
-          for (const diag of result.result) {
-            if (diag.file && fileNamesSet.has(diag.file.fileName)) {
-              diagnostics.push(diag);
+      // Track which files were updated in this check
+      const updatedFiles = new Set<string>();
+
+      // On first call, we need to process ALL files
+      // On subsequent calls, getSemanticDiagnosticsOfNextAffectedFile returns only affected files
+      if (!initialCheckDone) {
+        // First time: get diagnostics for all project files
+        for (const sourceFile of program.getSourceFiles()) {
+          if (fileNamesSet.has(sourceFile.fileName)) {
+            const syntactic = program.getSyntacticDiagnostics(sourceFile);
+            const semantic = program.getSemanticDiagnostics(sourceFile);
+            const fileDiags = [...syntactic, ...semantic].filter(
+              (d) => d.category === ts.DiagnosticCategory.Error
+            );
+            diagnosticsPerFile.set(sourceFile.fileName, fileDiags);
+            updatedFiles.add(sourceFile.fileName);
+          }
+        }
+
+        // Drain the builder's affected files iterator to sync its state
+        while (builderProgram.getSemanticDiagnosticsOfNextAffectedFile() !== undefined) {
+          // Just drain it
+        }
+
+        initialCheckDone = true;
+      } else {
+        // Subsequent calls: only process affected files via the incremental API
+        let result: ts.AffectedFileResult<readonly ts.Diagnostic[]> | undefined;
+        while ((result = builderProgram.getSemanticDiagnosticsOfNextAffectedFile()) !== undefined) {
+          // result.affected can be a SourceFile or Program
+          const affected = result.affected;
+          let affectedFileName: string | undefined;
+
+          if ("fileName" in affected && typeof affected.fileName === "string") {
+            affectedFileName = affected.fileName;
+          }
+
+          if (affectedFileName && fileNamesSet.has(affectedFileName)) {
+            // Get fresh diagnostics for this file
+            const sourceFile = program.getSourceFile(affectedFileName);
+            if (sourceFile) {
+              const syntactic = program.getSyntacticDiagnostics(sourceFile);
+              // result.result contains the semantic diagnostics
+              const semantic = result.result ?? [];
+              const fileDiags = [...syntactic, ...semantic].filter(
+                (d) => d.category === ts.DiagnosticCategory.Error
+              );
+              diagnosticsPerFile.set(affectedFileName, fileDiags);
+              updatedFiles.add(affectedFileName);
             }
           }
         }
       }
 
-      // Filter to errors only
-      cachedDiagnostics = diagnostics.filter(
-        (d) => d.category === ts.DiagnosticCategory.Error
-      );
+      // Clear the recheck set
+      filesToRecheck.clear();
 
-      return cachedDiagnostics;
+      // Merge and cache all diagnostics
+      const allDiags: ts.Diagnostic[] = [];
+      for (const diags of diagnosticsPerFile.values()) {
+        allDiags.push(...diags);
+      }
+      cachedMergedDiagnostics = allDiags;
+
+      return cachedMergedDiagnostics;
     },
 
     getCodeFixes(diagnostic: ts.Diagnostic): readonly ts.CodeFixAction[] {
@@ -527,6 +580,11 @@ export function createIncrementalTypeScriptHost(configPath: string): TypeScriptH
       }
       // Clear source file cache
       sourceFileCache.clear();
+      // Clear per-file diagnostics cache
+      diagnosticsPerFile.clear();
+      cachedMergedDiagnostics = null;
+      initialCheckDone = false;
+      filesToRecheck.clear();
       // Force full rebuild on next getDiagnostics
       builderProgram = ts.createSemanticDiagnosticsBuilderProgram(
         fileNames,
@@ -534,7 +592,6 @@ export function createIncrementalTypeScriptHost(configPath: string): TypeScriptH
         compilerHost,
         undefined
       );
-      cachedDiagnostics = null;
     },
 
     getStats(): TypeScriptHostStats {
