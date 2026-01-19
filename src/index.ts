@@ -36,4 +36,4 @@ export {
   toDiagnosticRef,
   toFileChanges,
 } from "./oracle/typescript.js";
-export type { TypeScriptHost } from "./oracle/typescript.js";
+export type { TypeScriptHost, TypeScriptHostStats } from "./oracle/typescript.js";

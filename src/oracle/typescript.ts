@@ -15,6 +15,16 @@ import path from "path";
 import { VirtualFS } from "./vfs.js";
 import type { DiagnosticRef, FileChange } from "../output/types.js";
 
+/** Instrumentation stats for performance monitoring */
+export interface TypeScriptHostStats {
+  /** Number of times getDiagnostics() was called */
+  getDiagnosticsCalls: number;
+  /** Number of times getCodeFixes() was called */
+  getCodeFixesCalls: number;
+  /** Number of times applyFix() was called */
+  applyFixCalls: number;
+}
+
 export interface TypeScriptHost {
   /** Get all diagnostics from the project */
   getDiagnostics(): ts.Diagnostic[];
@@ -51,6 +61,18 @@ export interface TypeScriptHost {
    * Useful for test isolation when reusing hosts.
    */
   reset(): void;
+
+  /**
+   * Get instrumentation stats for performance monitoring.
+   * Returns counts of how many times each method was called.
+   */
+  getStats(): TypeScriptHostStats;
+
+  /**
+   * Reset instrumentation stats to zero.
+   * Useful for measuring specific operations.
+   */
+  resetStats(): void;
 }
 
 /**
@@ -116,8 +138,16 @@ export function createTypeScriptHost(configPath: string): TypeScriptHost {
   const documentRegistry = ts.createDocumentRegistry();
   const languageService = ts.createLanguageService(host, documentRegistry);
 
+  // Instrumentation stats
+  const stats: TypeScriptHostStats = {
+    getDiagnosticsCalls: 0,
+    getCodeFixesCalls: 0,
+    applyFixCalls: 0,
+  };
+
   return {
     getDiagnostics(): ts.Diagnostic[] {
+      stats.getDiagnosticsCalls++;
       const diagnostics: ts.Diagnostic[] = [];
 
       for (const fileName of fileNames) {
@@ -139,6 +169,7 @@ export function createTypeScriptHost(configPath: string): TypeScriptHost {
     },
 
     getCodeFixes(diagnostic: ts.Diagnostic): readonly ts.CodeFixAction[] {
+      stats.getCodeFixesCalls++;
       if (
         !diagnostic.file ||
         diagnostic.start === undefined ||
@@ -163,6 +194,7 @@ export function createTypeScriptHost(configPath: string): TypeScriptHost {
     },
 
     applyFix(fix: ts.CodeFixAction): void {
+      stats.applyFixCalls++;
       for (const fileChange of fix.changes) {
         // Skip files not in VFS (e.g., node_modules declaration files)
         if (vfs.getContent(fileChange.fileName) === undefined) {
@@ -206,6 +238,16 @@ export function createTypeScriptHost(configPath: string): TypeScriptHost {
       for (const fileName of fileNames) {
         bumpFileVersion(fileName);
       }
+    },
+
+    getStats(): TypeScriptHostStats {
+      return { ...stats };
+    },
+
+    resetStats(): void {
+      stats.getDiagnosticsCalls = 0;
+      stats.getCodeFixesCalls = 0;
+      stats.applyFixCalls = 0;
     },
   };
 }
@@ -361,8 +403,16 @@ export function createIncrementalTypeScriptHost(configPath: string): TypeScriptH
     cachedDiagnostics = null;
   }
 
+  // Instrumentation stats
+  const stats: TypeScriptHostStats = {
+    getDiagnosticsCalls: 0,
+    getCodeFixesCalls: 0,
+    applyFixCalls: 0,
+  };
+
   return {
     getDiagnostics(): ts.Diagnostic[] {
+      stats.getDiagnosticsCalls++;
       rebuildProgram();
 
       if (cachedDiagnostics !== null) {
@@ -402,6 +452,7 @@ export function createIncrementalTypeScriptHost(configPath: string): TypeScriptH
     },
 
     getCodeFixes(diagnostic: ts.Diagnostic): readonly ts.CodeFixAction[] {
+      stats.getCodeFixesCalls++;
       if (
         !diagnostic.file ||
         diagnostic.start === undefined ||
@@ -426,6 +477,7 @@ export function createIncrementalTypeScriptHost(configPath: string): TypeScriptH
     },
 
     applyFix(fix: ts.CodeFixAction): void {
+      stats.applyFixCalls++;
       for (const fileChange of fix.changes) {
         // Skip files not in VFS (e.g., node_modules declaration files)
         if (vfs.getContent(fileChange.fileName) === undefined) {
@@ -480,6 +532,16 @@ export function createIncrementalTypeScriptHost(configPath: string): TypeScriptH
         undefined
       );
       cachedDiagnostics = null;
+    },
+
+    getStats(): TypeScriptHostStats {
+      return { ...stats };
+    },
+
+    resetStats(): void {
+      stats.getDiagnosticsCalls = 0;
+      stats.getCodeFixesCalls = 0;
+      stats.applyFixCalls = 0;
     },
   };
 }
