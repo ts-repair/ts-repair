@@ -232,7 +232,8 @@ function verify(
   diagnostic: ts.Diagnostic,
   fix: ts.CodeFixAction,
   diagnosticsBefore: ts.Diagnostic[],
-  beforeKeys?: Set<string>  // Optional pre-computed keys for efficiency
+  beforeKeys?: Set<string>,  // Optional pre-computed keys Set for efficiency
+  beforeKeysArray?: string[]  // Optional pre-computed keys array for resolvedDiagnostics
 ): VerificationResult {
   const vfs = host.getVFS();
   const snapshot = vfs.snapshot();
@@ -251,23 +252,25 @@ function verify(
   const diagnosticsAfter = host.getDiagnostics();
   const errorsAfter = diagnosticsAfter.length;
 
-  // Compute keys for Set-based lookups (O(1) instead of O(n) scans)
-  const afterKeys = new Set(diagnosticsAfter.map(diagnosticKey));
+  // Compute keys once per diagnostic (diagnosticKey calls flattenDiagnosticMessageText which is expensive)
+  // Store as array so we can reuse by index without recomputing
+  const afterKeysArray = diagnosticsAfter.map(diagnosticKey);
+  const afterKeys = new Set(afterKeysArray);
   const actualBeforeKeys = beforeKeys ?? new Set(diagnosticsBefore.map(diagnosticKey));
 
   // Check if target diagnostic was fixed using Set lookup
   const targetKey = diagnosticKey(diagnostic);
   const targetFixed = !afterKeys.has(targetKey);
 
-  // Find new diagnostics using Set difference (O(n) instead of O(n*m))
+  // Find new diagnostics using pre-computed keys (avoid recomputing diagnosticKey)
   const newDiagnostics = diagnosticsAfter.filter(
-    (d) => !actualBeforeKeys.has(diagnosticKey(d))
+    (_, i) => !actualBeforeKeys.has(afterKeysArray[i])
   );
 
-  // Find resolved diagnostics using Set difference
-  const resolvedDiagnostics = diagnosticsBefore.filter(
-    (d) => !afterKeys.has(diagnosticKey(d))
-  );
+  // Find resolved diagnostics using pre-computed keys if available
+  const resolvedDiagnostics = beforeKeysArray
+    ? diagnosticsBefore.filter((_, i) => !afterKeys.has(beforeKeysArray[i]))
+    : diagnosticsBefore.filter((d) => !afterKeys.has(diagnosticKey(d)));
 
   // Calculate weighted scores for weighted strategy
   const resolvedWeight = resolvedDiagnostics.reduce(
@@ -656,8 +659,9 @@ export function plan(
       `Iteration ${iteration}: ${currentDiagnostics.length} errors`
     );
 
-    // Pre-compute diagnostic keys for O(1) lookups during verification
-    const currentDiagnosticKeys = new Set(currentDiagnostics.map(diagnosticKey));
+    // Pre-compute diagnostic keys once per iteration (avoid recomputing in each verify call)
+    const currentDiagnosticKeysArray = currentDiagnostics.map(diagnosticKey);
+    const currentDiagnosticKeys = new Set(currentDiagnosticKeysArray);
 
     // Find the best fix among all candidates
     let bestFix: {
@@ -752,7 +756,7 @@ export function plan(
           },
         });
 
-        const result = verify(host, diagnostic, fix, currentDiagnostics, currentDiagnosticKeys);
+        const result = verify(host, diagnostic, fix, currentDiagnostics, currentDiagnosticKeys, currentDiagnosticKeysArray);
         candidatesVerified++;
 
         logger.log({
@@ -911,8 +915,9 @@ function classifyRemaining(
 ): ClassifiedDiagnostic[] {
   const classified: ClassifiedDiagnostic[] = [];
 
-  // Pre-compute diagnostic keys for O(1) lookups during verification
-  const diagnosticKeys = new Set(diagnostics.map(diagnosticKey));
+  // Pre-compute diagnostic keys once (avoid recomputing in each verify call)
+  const diagnosticKeysArray = diagnostics.map(diagnosticKey);
+  const diagnosticKeys = new Set(diagnosticKeysArray);
 
   for (const diagnostic of diagnostics) {
     const fixes = host.getCodeFixes(diagnostic);
@@ -933,7 +938,7 @@ function classifyRemaining(
     let validFixCount = 0;
 
     for (const fix of fixes.slice(0, opts.maxCandidates)) {
-      const result = verify(host, diagnostic, fix, diagnostics, diagnosticKeys);
+      const result = verify(host, diagnostic, fix, diagnostics, diagnosticKeys, diagnosticKeysArray);
       const risk = assessRisk(fix.fixName);
 
       // Skip high-risk fixes if not allowed
