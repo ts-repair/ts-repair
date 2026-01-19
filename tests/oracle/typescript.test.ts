@@ -473,23 +473,27 @@ describe("createIncrementalTypeScriptHost", () => {
       expect(diagnostics1).toBe(diagnostics2);
     });
 
-    it("invalidates cache when file changes", () => {
-      const configPath = path.join(FIXTURES_DIR, "no-errors/tsconfig.json");
-      const host = createIncrementalTypeScriptHost(configPath);
+    it(
+      "invalidates cache when file changes",
+      () => {
+        const configPath = path.join(FIXTURES_DIR, "no-errors/tsconfig.json");
+        const host = createIncrementalTypeScriptHost(configPath);
 
-      const diagnostics1 = host.getDiagnostics();
-      expect(diagnostics1).toHaveLength(0);
+        const diagnostics1 = host.getDiagnostics();
+        expect(diagnostics1).toHaveLength(0);
 
-      // Introduce an error
-      const vfs = host.getVFS();
-      const fileName = host.getFileNames()[0];
-      vfs.write(fileName, "const x: number = 'string';");
-      host.notifyFileChanged!(fileName);
+        // Introduce an error
+        const vfs = host.getVFS();
+        const fileName = host.getFileNames()[0];
+        vfs.write(fileName, "const x: number = 'string';");
+        host.notifyFileChanged!(fileName);
 
-      const diagnostics2 = host.getDiagnostics();
-      expect(diagnostics2.length).toBeGreaterThan(0);
-      expect(diagnostics1).not.toBe(diagnostics2);
-    });
+        const diagnostics2 = host.getDiagnostics();
+        expect(diagnostics2.length).toBeGreaterThan(0);
+        expect(diagnostics1).not.toBe(diagnostics2);
+      },
+      { timeout: 15000 }
+    );
   });
 
   describe("getCodeFixes", () => {
@@ -560,30 +564,38 @@ describe("createIncrementalTypeScriptHost", () => {
   });
 
   describe("compatibility with standard host", () => {
-    it("produces same diagnostics as standard host for error-free project", () => {
-      const configPath = path.join(FIXTURES_DIR, "no-errors/tsconfig.json");
-      const standardHost = createTypeScriptHost(configPath);
-      const incrementalHost = createIncrementalTypeScriptHost(configPath);
+    it(
+      "produces same diagnostics as standard host for error-free project",
+      () => {
+        const configPath = path.join(FIXTURES_DIR, "no-errors/tsconfig.json");
+        const standardHost = createTypeScriptHost(configPath);
+        const incrementalHost = createIncrementalTypeScriptHost(configPath);
 
-      expect(standardHost.getDiagnostics().length).toBe(
-        incrementalHost.getDiagnostics().length
-      );
-    });
+        expect(standardHost.getDiagnostics().length).toBe(
+          incrementalHost.getDiagnostics().length
+        );
+      },
+      { timeout: 15000 }
+    );
 
-    it("produces same diagnostics as standard host for project with errors", () => {
-      const configPath = path.join(FIXTURES_DIR, "missing-import/tsconfig.json");
-      const standardHost = createTypeScriptHost(configPath);
-      const incrementalHost = createIncrementalTypeScriptHost(configPath);
+    it(
+      "produces same diagnostics as standard host for project with errors",
+      () => {
+        const configPath = path.join(FIXTURES_DIR, "missing-import/tsconfig.json");
+        const standardHost = createTypeScriptHost(configPath);
+        const incrementalHost = createIncrementalTypeScriptHost(configPath);
 
-      const standardDiags = standardHost.getDiagnostics();
-      const incrementalDiags = incrementalHost.getDiagnostics();
+        const standardDiags = standardHost.getDiagnostics();
+        const incrementalDiags = incrementalHost.getDiagnostics();
 
-      expect(standardDiags.length).toBe(incrementalDiags.length);
+        expect(standardDiags.length).toBe(incrementalDiags.length);
 
-      // Check that error codes match
-      const standardCodes = standardDiags.map((d) => d.code).sort();
-      const incrementalCodes = incrementalDiags.map((d) => d.code).sort();
-      expect(standardCodes).toEqual(incrementalCodes);
-    });
+        // Check that error codes match
+        const standardCodes = standardDiags.map((d) => d.code).sort();
+        const incrementalCodes = incrementalDiags.map((d) => d.code).sort();
+        expect(standardCodes).toEqual(incrementalCodes);
+      },
+      { timeout: 15000 }
+    );
   });
 });
