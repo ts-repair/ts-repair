@@ -221,23 +221,32 @@ interface EditRange {
 }
 
 /**
- * Speculatively apply a fix and measure the diagnostic delta
+ * Speculatively apply a fix and measure the diagnostic delta.
+ *
+ * Performance optimizations:
+ * 1. Accepts diagnosticsBefore as parameter to avoid redundant type-checking
+ * 2. Only notifies host about files that were actually modified
  */
 function verify(
   host: TypeScriptHost,
   diagnostic: ts.Diagnostic,
-  fix: ts.CodeFixAction
+  fix: ts.CodeFixAction,
+  diagnosticsBefore: ts.Diagnostic[]
 ): VerificationResult {
   const vfs = host.getVFS();
   const snapshot = vfs.snapshot();
-
-  const diagnosticsBefore = host.getDiagnostics();
   const errorsBefore = diagnosticsBefore.length;
+
+  // Track which files the fix modifies (for targeted notification after restore)
+  const modifiedFiles = new Set<string>();
+  for (const fileChange of fix.changes) {
+    modifiedFiles.add(fileChange.fileName);
+  }
 
   // Apply the fix
   host.applyFix(fix);
 
-  // Re-check
+  // Re-check (this is the only getDiagnostics call needed per verification)
   const diagnosticsAfter = host.getDiagnostics();
   const errorsAfter = diagnosticsAfter.length;
   const afterKeys = new Set(diagnosticsAfter.map(diagnosticKey));
@@ -282,9 +291,19 @@ function verify(
   );
   const editSize = computeEditSize(fix);
 
-  // Restore VFS and notify host so LanguageService sees updated files
+  // Restore VFS
   vfs.restore(snapshot);
-  host.notifyFilesChanged();
+
+  // Notify host only about files that were modified (not all files)
+  // This enables incremental re-checking on the next verification
+  if (host.notifyFileChanged) {
+    for (const fileName of modifiedFiles) {
+      host.notifyFileChanged(fileName);
+    }
+  } else {
+    // Fall back to notifying all files for non-incremental host
+    host.notifyFilesChanged();
+  }
 
   return {
     targetFixed,
@@ -737,7 +756,7 @@ export function plan(
           },
         });
 
-        const result = verify(host, diagnostic, fix);
+        const result = verify(host, diagnostic, fix, currentDiagnostics);
         candidatesVerified++;
 
         logger.log({
@@ -905,7 +924,7 @@ function classifyRemaining(
     let validFixCount = 0;
 
     for (const fix of fixes.slice(0, opts.maxCandidates)) {
-      const result = verify(host, diagnostic, fix);
+      const result = verify(host, diagnostic, fix, diagnostics);
       const risk = assessRisk(fix.fixName);
 
       // Skip high-risk fixes if not allowed
