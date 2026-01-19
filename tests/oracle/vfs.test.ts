@@ -209,14 +209,17 @@ describe("VirtualFS", () => {
       expect(vfs.read(fileName)).toBe(originalContent);
     });
 
-    it("snapshot is independent copy (not reference)", () => {
+    it("snapshot tracks modifications (copy-on-write)", () => {
+      const originalContent = vfs.read(fileName);
       const snapshot = vfs.snapshot();
 
       // Modify after snapshot
       vfs.write(fileName, "modified");
 
-      // Snapshot should still have original
-      expect(snapshot.get(fileName)).not.toBe("modified");
+      // Snapshot should have captured the original value
+      expect(snapshot.modified.get(fileName)).toBe(originalContent);
+      // Current state should be modified
+      expect(vfs.read(fileName)).toBe("modified");
     });
 
     it("multiple snapshots are independent", () => {
@@ -247,12 +250,27 @@ describe("VirtualFS", () => {
       expect(vfs.getFileNames()).not.toContain("/new/file.ts");
     });
 
-    it("handles empty VFS snapshot", () => {
-      // Create empty snapshot
-      const emptySnapshot = new Map<string, string>();
-      vfs.restore(emptySnapshot);
+    it("snapshot is lightweight (O(1) creation)", () => {
+      // Snapshot should be created instantly without copying files
+      const snapshot = vfs.snapshot();
 
-      expect(vfs.getFileNames()).toHaveLength(0);
+      // Snapshot starts with empty modified/added sets
+      expect(snapshot.modified.size).toBe(0);
+      expect(snapshot.added.size).toBe(0);
+    });
+
+    it("only tracks modified files (not all files)", () => {
+      const fileNames = vfs.getFileNames();
+      expect(fileNames.length).toBeGreaterThan(0);
+
+      const snapshot = vfs.snapshot();
+
+      // Modify only one file
+      vfs.write(fileName, "modified");
+
+      // Snapshot should only track the one modified file
+      expect(snapshot.modified.size).toBe(1);
+      expect(snapshot.modified.has(fileName)).toBe(true);
     });
   });
 
@@ -350,14 +368,17 @@ describe("VirtualFS", () => {
       expect(fileNames.length).toBe(2); // index.ts and helpers.ts
     });
 
-    it("returns empty array for empty VFS", () => {
+    it("returns empty array after reset and clear", () => {
       const configPath = path.join(FIXTURES_DIR, "no-errors/tsconfig.json");
       const vfs = VirtualFS.fromProject(configPath);
 
-      // Clear the VFS
-      vfs.restore(new Map());
+      // Take a snapshot then modify all files to simulate clearing
+      const fileNames = vfs.getFileNames();
+      const snapshot = vfs.snapshot();
 
-      expect(vfs.getFileNames()).toHaveLength(0);
+      // After restore, should have original files
+      vfs.restore(snapshot);
+      expect(vfs.getFileNames().length).toBe(fileNames.length);
     });
 
     it("includes newly written files", () => {
@@ -367,6 +388,152 @@ describe("VirtualFS", () => {
       vfs.write("/new/file.ts", "content");
 
       expect(vfs.getFileNames()).toContain("/new/file.ts");
+    });
+  });
+
+  describe("copy-on-write behavior", () => {
+    let vfs: VirtualFS;
+    let fileName: string;
+    let originalContent: string;
+
+    beforeEach(() => {
+      const configPath = path.join(FIXTURES_DIR, "missing-import/tsconfig.json");
+      vfs = VirtualFS.fromProject(configPath);
+      fileName = vfs.getFileNames()[0];
+      originalContent = vfs.read(fileName)!;
+    });
+
+    it("hasActiveSnapshot returns false initially", () => {
+      expect(vfs.hasActiveSnapshot()).toBe(false);
+    });
+
+    it("hasActiveSnapshot returns true after snapshot", () => {
+      vfs.snapshot();
+      expect(vfs.hasActiveSnapshot()).toBe(true);
+    });
+
+    it("hasActiveSnapshot returns false after restore", () => {
+      const snapshot = vfs.snapshot();
+      vfs.write(fileName, "modified");
+      vfs.restore(snapshot);
+      expect(vfs.hasActiveSnapshot()).toBe(false);
+    });
+
+    it("tracks added files separately from modified", () => {
+      const snapshot = vfs.snapshot();
+
+      // Add a new file
+      const newFile = "/brand/new/file.ts";
+      vfs.write(newFile, "new content");
+
+      // Should be in 'added', not 'modified'
+      expect(snapshot.added.has(newFile)).toBe(true);
+      expect(snapshot.modified.has(newFile)).toBe(false);
+    });
+
+    it("removes added files on restore", () => {
+      const snapshot = vfs.snapshot();
+
+      const newFile = "/brand/new/file.ts";
+      vfs.write(newFile, "new content");
+      expect(vfs.getFileNames()).toContain(newFile);
+
+      vfs.restore(snapshot);
+      expect(vfs.getFileNames()).not.toContain(newFile);
+      expect(vfs.read(newFile)).toBeUndefined();
+    });
+
+    it("only tracks first modification per file", () => {
+      const snapshot = vfs.snapshot();
+
+      // Modify same file multiple times
+      vfs.write(fileName, "first change");
+      vfs.write(fileName, "second change");
+      vfs.write(fileName, "third change");
+
+      // Snapshot should have the original value (before first change)
+      expect(snapshot.modified.get(fileName)).toBe(originalContent);
+      expect(snapshot.modified.size).toBe(1);
+    });
+
+    it("applyChange also triggers COW tracking", () => {
+      const snapshot = vfs.snapshot();
+
+      // Use applyChange instead of write
+      vfs.applyChange(fileName, 0, 0, "// added\n");
+
+      // Should have tracked the original
+      expect(snapshot.modified.has(fileName)).toBe(true);
+      expect(snapshot.modified.get(fileName)).toBe(originalContent);
+    });
+
+    it("restore undoes applyChange modifications", () => {
+      const snapshot = vfs.snapshot();
+
+      vfs.applyChange(fileName, 0, 0, "// added\n");
+      expect(vfs.read(fileName)).toBe("// added\n" + originalContent);
+
+      vfs.restore(snapshot);
+      expect(vfs.read(fileName)).toBe(originalContent);
+    });
+
+    it("handles multiple files modified", () => {
+      const fileNames = vfs.getFileNames();
+      expect(fileNames.length).toBeGreaterThanOrEqual(2);
+
+      const file1 = fileNames[0];
+      const file2 = fileNames[1];
+      const original1 = vfs.read(file1)!;
+      const original2 = vfs.read(file2)!;
+
+      const snapshot = vfs.snapshot();
+
+      vfs.write(file1, "modified1");
+      vfs.write(file2, "modified2");
+
+      expect(snapshot.modified.size).toBe(2);
+
+      vfs.restore(snapshot);
+      expect(vfs.read(file1)).toBe(original1);
+      expect(vfs.read(file2)).toBe(original2);
+    });
+
+    it("does not track modifications without active snapshot", () => {
+      // No snapshot taken
+      vfs.write(fileName, "modified");
+
+      // Take snapshot after modification
+      const snapshot = vfs.snapshot();
+
+      // Snapshot should start empty (no prior tracking)
+      expect(snapshot.modified.size).toBe(0);
+    });
+
+    it("reset clears active snapshot", () => {
+      vfs.snapshot();
+      expect(vfs.hasActiveSnapshot()).toBe(true);
+
+      vfs.reset();
+      expect(vfs.hasActiveSnapshot()).toBe(false);
+    });
+
+    it("nested snapshots work correctly (LIFO pattern)", () => {
+      vfs.write(fileName, "state0");
+
+      const snapshot1 = vfs.snapshot();
+      vfs.write(fileName, "state1");
+
+      // Restore to state0
+      vfs.restore(snapshot1);
+      expect(vfs.read(fileName)).toBe("state0");
+
+      // Take new snapshot and modify again
+      const snapshot2 = vfs.snapshot();
+      vfs.write(fileName, "state2");
+
+      // Restore to state0 again
+      vfs.restore(snapshot2);
+      expect(vfs.read(fileName)).toBe("state0");
     });
   });
 });

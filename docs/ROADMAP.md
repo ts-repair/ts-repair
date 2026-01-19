@@ -161,6 +161,46 @@ Track relationships between repairs for batching.
 - `RepairPlan.batches` contains arrays of fix IDs that can be applied together
 - Agents can apply entire batches without re-verification
 
+### Phase 4.5: Performance Optimizations
+
+Optimize memory usage and verification speed for large projects (1000+ errors).
+
+#### High Priority
+
+| Component | Status | Priority | Notes |
+|-----------|--------|----------|-------|
+| Copy-on-write VFS snapshots | ✅ Done | **High** | Only copy files that change, not entire Map |
+| BuilderProgram for verification | 📋 Planned | **High** | Incremental re-checking via TypeScript's builder APIs |
+
+**Copy-on-write VFS:**
+
+Current `snapshot()` copies the entire file map on every verification. With 500 verifications and 100+ files, this creates massive GC pressure. COW approach:
+- Snapshot stores reference to base map + empty modifications map
+- Only files that change get copied into modifications
+- Restore is O(1) — just discard the modifications
+
+**BuilderProgram for verification:**
+
+Current approach re-typechecks all files after each speculative fix. TypeScript's `SemanticDiagnosticsBuilderProgram` tracks file dependencies and only re-checks affected files:
+- Change file X → only re-check X and files that import X
+- For typical projects, reduces per-verification work by 10-100x
+- Requires hybrid approach: BuilderProgram for diagnostics, LanguageService for code fixes
+
+#### Longer-Term / Speculative
+
+| Component | Status | Priority | Notes |
+|-----------|--------|----------|-------|
+| Cache baseline diagnostics | 📋 Planned | Medium | Don't call `getDiagnostics()` twice per verification |
+| Diagnostic locality ordering | 📋 Planned | Low | Process diagnostics by file to reuse TypeScript state |
+| Periodic DocumentRegistry flush | 📋 Planned | Low | Trade memory for CPU — forces re-parsing |
+| Hybrid LS + BuilderProgram | 📋 Planned | Low | Optimal but complex architecture |
+| Parallel verification | 📋 Planned | Low | Check multiple candidates concurrently |
+
+**Observed performance characteristics (Zod codebase, ~1200 errors):**
+- Memory: ~12GB with current implementation
+- Root causes: Full VFS snapshots, repeated full diagnostic collection, TypeScript DocumentRegistry growth
+- Target: <2GB memory, <30s for 500 verifications
+
 ### Phase 5: Solver Integration
 
 Fallback to constraint solver when greedy stalls.
@@ -397,6 +437,7 @@ ts-repair/
 | Phase 2.7 | ✅ Done | Scoring function (delta + weighted) |
 | Phase 3 | ✅ Done | Classification |
 | Phase 4 | ✅ Done | Dependency metadata + batching |
+| Phase 4.5 | 🚧 In Progress | Performance optimizations (COW VFS, incremental) |
 | Phase 5 | 📋 Planned | Solver (if needed) |
 | Phase 6 | ✅ Done | Agent integration (MCP + Skills) |
 | Phase 7 | After benchmarks | Protocol specification |
@@ -466,12 +507,12 @@ TypeScript's code fix suggestions sometimes prefer re-export paths (e.g., `impor
 
 ## Open Questions
 
-1. **Incremental checking** — Can we use TypeScript's incremental APIs to speed up verification?
+1. ~~**Incremental checking** — Can we use TypeScript's incremental APIs to speed up verification?~~ → **Phase 4.5** (BuilderProgram)
 2. **Parallel verification** — Can we check multiple candidates concurrently?
 3. **Caching** — Can we cache verification results across runs?
-4. **Project scale** — How does this perform on 1000+ file projects?
+4. ~~**Project scale** — How does this perform on 1000+ file projects?~~ → **Phase 4.5** addresses this
 
 ---
 
 *Last updated: January 18, 2026*
-*Phases 1-4, 2.5-2.7, 6 complete. Next: Phase 5 (Solver) or Phase 7 (Protocol Specification).*
+*Phases 1-4, 2.5-2.7, 6 complete. Phase 4.5 in progress (performance). Next: Phase 5 (Solver) or Phase 7 (Protocol Specification).*
