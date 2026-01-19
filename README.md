@@ -25,7 +25,9 @@ ts-repair speculatively applies candidate fixes in-memory and re-runs the type c
 
 Because candidate fixes can interact—one fix may enable or invalidate another—ts-repair applies them in an order that monotonically reduces total errors. Each committed step is verified to make progress before the next is considered.
 
-**Early stage:** ts-repair is a working prototype. Early testing on real-world codebases (React frontends, Node.js backends, monorepo libraries) shows it eliminates the compile → reason → recompile loop for mechanical fixes. Rigorous benchmarks with token and iteration measurements are coming soon.
+**Early stage:** ts-repair is a working prototype. Early testing on real-world codebases (React frontends, Node.js backends, monorepo libraries) shows it eliminates the compile → reason → recompile loop for mechanical fixes.
+
+**Early benchmark results:** In a [controlled test](docs/benchmarking/zod-benchmark-01.md) on the Zod validation library (206 TypeScript errors), ts-repair reduced API costs by 52% ($2.55 → $1.23) and fixing time by 32% compared to manual error fixing. The biggest efficiency gain: replacing 6 compile-check-fix rounds with 1, cutting token usage by 63%. More comprehensive benchmarks are coming soon.
 
 ## Quick Example
 
@@ -191,6 +193,7 @@ The purpose is to eliminate mechanical compiler-guided work so agents spend toke
 | CLI Reference | [docs/CLI.md](docs/CLI.md) |
 | Configuration | [docs/CONFIG.md](docs/CONFIG.md) |
 | Agent Integration | [docs/AGENT_INTEGRATION.md](docs/AGENT_INTEGRATION.md) |
+| Benchmarks | [docs/benchmarking/](docs/benchmarking/) |
 | Architecture | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Roadmap | [docs/ROADMAP.md](docs/ROADMAP.md) |
 | Product Requirements | [docs/PRD.md](docs/PRD.md) |
