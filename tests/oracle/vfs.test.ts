@@ -210,13 +210,14 @@ describe("VirtualFS", () => {
     });
 
     it("snapshot is independent copy (not reference)", () => {
+      const originalContent = vfs.read(fileName);
       const snapshot = vfs.snapshot();
 
       // Modify after snapshot
       vfs.write(fileName, "modified");
 
-      // Snapshot should still have original
-      expect(snapshot.get(fileName)).not.toBe("modified");
+      // Snapshot should have captured the original (CoW: stored in modified map)
+      expect(snapshot.modified.get(fileName)).toBe(originalContent);
     });
 
     it("multiple snapshots are independent", () => {
@@ -247,12 +248,18 @@ describe("VirtualFS", () => {
       expect(vfs.getFileNames()).not.toContain("/new/file.ts");
     });
 
-    it("handles empty VFS snapshot", () => {
-      // Create empty snapshot
-      const emptySnapshot = new Map<string, string>();
-      vfs.restore(emptySnapshot);
+    it("handles snapshot with no modifications", () => {
+      // Create snapshot but don't modify anything
+      const originalContent = vfs.read(fileName);
+      const snapshot = vfs.snapshot();
 
-      expect(vfs.getFileNames()).toHaveLength(0);
+      // Restore without any modifications
+      vfs.restore(snapshot);
+
+      // File should still have its content
+      expect(vfs.read(fileName)).toBe(originalContent);
+      expect(snapshot.modified.size).toBe(0);
+      expect(snapshot.added.size).toBe(0);
     });
   });
 
@@ -350,14 +357,18 @@ describe("VirtualFS", () => {
       expect(fileNames.length).toBe(2); // index.ts and helpers.ts
     });
 
-    it("returns empty array for empty VFS", () => {
+    it("returns original files after reset", () => {
       const configPath = path.join(FIXTURES_DIR, "no-errors/tsconfig.json");
       const vfs = VirtualFS.fromProject(configPath);
+      const originalCount = vfs.getFileNames().length;
 
-      // Clear the VFS
-      vfs.restore(new Map());
+      // Add a new file
+      vfs.write("/new/file.ts", "content");
+      expect(vfs.getFileNames().length).toBe(originalCount + 1);
 
-      expect(vfs.getFileNames()).toHaveLength(0);
+      // Reset to original
+      vfs.reset();
+      expect(vfs.getFileNames()).toHaveLength(originalCount);
     });
 
     it("includes newly written files", () => {
