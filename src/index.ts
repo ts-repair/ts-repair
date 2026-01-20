@@ -72,3 +72,17 @@ export {
 
 // vNext: Verification with cone support
 export { verifyWithCone } from "./oracle/planner.js";
+
+// vNext: Solution Builder Framework
+export {
+  BuilderRegistry,
+  createBuilderContext,
+  defaultRegistry,
+  registerBuilder,
+  findNodeAtPosition,
+} from "./oracle/builder.js";
+export type {
+  SolutionBuilder,
+  BuilderContext,
+  BuilderMatchResult,
+} from "./output/types.js";

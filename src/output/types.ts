@@ -299,3 +299,72 @@ export interface VerificationPolicy {
   /** Host invalidation strategy after verification */
   hostInvalidation: "modified" | "cone" | "full";
 }
+
+// ============================================================================
+// vNext: Solution Builder Framework
+// ============================================================================
+
+/**
+ * Context provided to solution builders for matching and generation.
+ */
+export interface BuilderContext {
+  /** The diagnostic being addressed */
+  diagnostic: import("typescript").Diagnostic;
+
+  /** TypeScript host for AST access, file content, etc. */
+  host: import("../oracle/typescript.js").TypeScriptHost;
+
+  /** Set of files currently containing errors */
+  filesWithErrors: Set<string>;
+
+  /** All current diagnostics (for cross-reference) */
+  currentDiagnostics: import("typescript").Diagnostic[];
+
+  /** Project compiler options */
+  compilerOptions: import("typescript").CompilerOptions;
+
+  /** Get AST node at diagnostic position (lazy-loaded) */
+  getNodeAtPosition(): import("typescript").Node | undefined;
+
+  /** Get source file for a path */
+  getSourceFile(path: string): import("typescript").SourceFile | undefined;
+}
+
+/**
+ * Solution builder interface.
+ * Builders generate synthetic candidates for specific diagnostic patterns.
+ */
+export interface SolutionBuilder {
+  /** Unique name for this builder (for logging/debugging) */
+  readonly name: string;
+
+  /** Human-readable description */
+  readonly description: string;
+
+  /** Diagnostic codes this builder handles (for fast routing) */
+  readonly diagnosticCodes?: readonly number[];
+
+  /** Message patterns this builder handles (regex) */
+  readonly messagePatterns?: readonly RegExp[];
+
+  /**
+   * Check if this builder can handle the given diagnostic.
+   * Should be cheap - pattern match on code/message first, AST only if needed.
+   */
+  matches(ctx: BuilderContext): boolean;
+
+  /**
+   * Generate candidate fixes for the diagnostic.
+   * Should return a bounded set (typically 1-6 candidates).
+   */
+  generate(ctx: BuilderContext): CandidateFix[];
+}
+
+/**
+ * Builder match result for debugging/logging.
+ */
+export interface BuilderMatchResult {
+  builder: string;
+  matched: boolean;
+  reason?: string;
+}

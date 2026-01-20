@@ -26,7 +26,15 @@ import { createBudgetLogger, createNoopLogger, type BudgetLogger } from "./logge
 import {
   getFilesModified as getCandidateFilesModified,
   applyCandidate,
+  wrapTsCodeFix,
+  computeCandidateEditSize,
+  deduplicateCandidates,
 } from "./candidate.js";
+import {
+  BuilderRegistry,
+  createBuilderContext,
+  defaultRegistry,
+} from "./builder.js";
 import { ConeCache, buildCone, getEffectiveScope } from "./cone.js";
 import { selectHostInvalidation } from "./policy.js";
 
@@ -46,9 +54,15 @@ export type ScoringStrategy = "delta" | "weighted";
 // ============================================================================
 
 /**
- * Assign risk level based on fix type
+ * Assign risk level based on fix type.
+ * If riskHint is provided (from builders), it takes precedence.
  */
-export function assessRisk(fixName: string): "low" | "medium" | "high" {
+export function assessRisk(
+  fixName: string,
+  riskHint?: "low" | "medium" | "high"
+): "low" | "medium" | "high" {
+  if (riskHint) return riskHint;
+
   // Low risk - almost always correct
   const lowRisk = [
     "import", // TypeScript's actual name for "Add import from ..."
@@ -124,6 +138,47 @@ export function pruneCandidates(
   // Sort by score descending, take top N
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, limit).map((s) => s.fix);
+}
+
+/**
+ * Compute a prior score for a CandidateFix based on cheap heuristics.
+ */
+function computeUnifiedPriorScore(candidate: CandidateFix): number {
+  let score = 0;
+
+  // Fix kind priority (imports > spelling > assertions)
+  const riskOrder = { low: 3, medium: 2, high: 1 };
+  const risk = candidate.riskHint ?? assessRisk(candidate.fixName);
+  score += riskOrder[risk] * 10;
+
+  // Smaller diffs preferred
+  const diffSize = computeCandidateEditSize(candidate);
+  score -= Math.min(diffSize / 100, 5);
+
+  return score;
+}
+
+/**
+ * Prune candidates using cheap priors before expensive verification.
+ * Works with the unified CandidateFix type.
+ */
+export function pruneCandidatesUnified(
+  candidates: CandidateFix[],
+  limit: number
+): CandidateFix[] {
+  if (candidates.length <= limit) {
+    return [...candidates];
+  }
+
+  // Score by cheap priors (no verification)
+  const scored = candidates.map((candidate) => ({
+    candidate,
+    score: computeUnifiedPriorScore(candidate),
+  }));
+
+  // Sort by score descending, take top N
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit).map((s) => s.candidate);
 }
 
 // ============================================================================
@@ -732,6 +787,12 @@ export interface PlanOptions {
 
   /** Verification policy for cone construction and caching (vNext) */
   verificationPolicy?: Partial<VerificationPolicy>;
+
+  /** Builder registry for synthetic candidate generation (vNext) */
+  builderRegistry?: BuilderRegistry;
+
+  /** Enable builder-generated candidates (vNext, default: true) */
+  useBuilders?: boolean;
 }
 
 const DEFAULT_OPTIONS: PlanOptions = {
@@ -743,6 +804,7 @@ const DEFAULT_OPTIONS: PlanOptions = {
   maxIterations: 50,
   scoringStrategy: "delta",
   scoreWeights: DEFAULT_SCORE_WEIGHTS,
+  useBuilders: true,
 };
 
 /**
@@ -813,6 +875,42 @@ export function plan(
     return `${diagnostic.file?.fileName}|${diagnostic.start}|${diagnostic.code}`;
   }
 
+  // Builder registry for synthetic candidate generation
+  const registry = opts.builderRegistry ?? defaultRegistry;
+
+  /**
+   * Get all candidates for a diagnostic from both TypeScript and builders.
+   * Returns unified CandidateFix array.
+   */
+  function getAllCandidates(
+    diagnostic: ts.Diagnostic,
+    filesWithErrorsSet: Set<string>,
+    currentDiags: ts.Diagnostic[]
+  ): CandidateFix[] {
+    const candidates: CandidateFix[] = [];
+
+    // 1. Get TypeScript code fixes and wrap them
+    const tsFixes = getCachedCodeFixes(diagnostic);
+    for (const fix of tsFixes) {
+      candidates.push(wrapTsCodeFix(fix));
+    }
+
+    // 2. Get builder-generated candidates if enabled
+    if (opts.useBuilders && registry.getAll().length > 0) {
+      const ctx = createBuilderContext(
+        diagnostic,
+        host,
+        filesWithErrorsSet,
+        currentDiags
+      );
+      const builderCandidates = registry.generateCandidates(ctx);
+      candidates.push(...builderCandidates);
+    }
+
+    // 3. Deduplicate across sources
+    return deduplicateCandidates(candidates);
+  }
+
   // Budget tracking
   let candidatesGenerated = 0;
   let candidatesVerified = 0;
@@ -872,7 +970,7 @@ export function plan(
     // Find the best fix among all candidates
     let bestFix: {
       diagnostic: ts.Diagnostic;
-      fix: ts.CodeFixAction;
+      candidate: CandidateFix;
       result: VerificationResult;
       risk: "low" | "medium" | "high";
       score: number; // Used by weighted strategy
@@ -905,15 +1003,16 @@ export function plan(
         continue;
       }
 
-      const allFixes = getCachedCodeFixes(diagnostic);
+      // Get all candidates from TypeScript and builders (unified)
+      const allCandidates = getAllCandidates(diagnostic, filesWithErrors, currentDiagnostics);
 
       // OPTIMIZATION: Track diagnostics with no fixes to skip in future iterations
-      if (allFixes.length === 0) {
+      if (allCandidates.length === 0) {
         diagnosticsWithNoFixes.add(diagKey);
         continue;
       }
 
-      candidatesGenerated += allFixes.length;
+      candidatesGenerated += allCandidates.length;
 
       logger.log({
         type: "candidates_generated",
@@ -925,27 +1024,27 @@ export function plan(
         },
       });
 
-      // Apply per-diagnostic limit and prune
+      // Apply per-diagnostic limit and prune (using unified pruning)
       const remaining = opts.maxCandidatesPerIteration - iterationCandidates;
       const perDiagLimit = Math.min(opts.maxCandidates, remaining);
-      const candidates = pruneCandidates(allFixes, perDiagLimit);
+      const candidates = pruneCandidatesUnified(allCandidates, perDiagLimit);
 
       // Log pruned candidates
-      const prunedCount = allFixes.length - candidates.length;
+      const prunedCount = allCandidates.length - candidates.length;
       for (let i = 0; i < prunedCount; i++) {
-        const prunedFix = allFixes[candidates.length + i];
-        if (prunedFix) {
+        const prunedCandidate = allCandidates[candidates.length + i];
+        if (prunedCandidate) {
           logger.log({
             type: "candidate_pruned",
             iteration,
-            fix: { name: prunedFix.fixName, description: prunedFix.description },
+            fix: { name: prunedCandidate.fixName, description: prunedCandidate.description },
           });
         }
       }
 
       iterationCandidates += candidates.length;
 
-      for (const fix of candidates) {
+      for (const candidate of candidates) {
         // Check budget before each verification
         if (candidatesVerified >= verificationBudget) {
           budgetExhausted = true;
@@ -958,7 +1057,8 @@ export function plan(
           break mainLoop;
         }
 
-        const risk = assessRisk(fix.fixName);
+        // Get risk from hint or assess from fix name
+        const risk = candidate.riskHint ?? assessRisk(candidate.fixName);
 
         // Skip high-risk fixes if not allowed
         if (risk === "high" && !opts.includeHighRisk) {
@@ -968,15 +1068,56 @@ export function plan(
         logger.log({
           type: "verification_start",
           iteration,
-          fix: { name: fix.fixName, description: fix.description },
+          fix: { name: candidate.fixName, description: candidate.description },
           budget: {
             used: candidatesVerified,
             remaining: verificationBudget - candidatesVerified,
           },
         });
 
+        // Verify the candidate
         const verifyStart = performance.now();
-        const result = verify(host, diagnostic, fix, currentDiagnostics, currentDiagnosticKeys, currentDiagnosticKeysArray);
+        let result: VerificationResult;
+        if (candidate.kind === "tsCodeFix") {
+          result = verify(host, diagnostic, candidate.action, currentDiagnostics, currentDiagnosticKeys, currentDiagnosticKeysArray);
+        } else {
+          // Verify synthetic candidate
+          const vfs = host.getVFS();
+          const snapshot = vfs.snapshot();
+
+          // Apply candidate
+          applyCandidate(vfs, candidate);
+          const modifiedFiles = getCandidateFilesModified(candidate);
+          host.notifySpecificFilesChanged(modifiedFiles);
+
+          // Get diagnostics after
+          const diagnosticsAfter = host.getDiagnosticsForFiles(modifiedFiles);
+
+          // Restore
+          vfs.restore(snapshot);
+          host.notifySpecificFilesChanged(modifiedFiles);
+
+          // Check if target was fixed
+          const targetKey = diagnosticKey(diagnostic);
+          const afterKeys = new Set(diagnosticsAfter.map(diagnosticKey));
+          const targetFixed = !afterKeys.has(targetKey);
+
+          // Find new diagnostics
+          const newDiagnostics = diagnosticsAfter.filter(
+            (d) => !currentDiagnosticKeys.has(diagnosticKey(d))
+          );
+
+          result = {
+            targetFixed,
+            errorsBefore: currentDiagnostics.length,
+            errorsAfter: diagnosticsAfter.length,
+            delta: currentDiagnostics.length - diagnosticsAfter.length,
+            newDiagnostics,
+            resolvedWeight: 0,
+            introducedWeight: 0,
+            editSize: computeCandidateEditSize(candidate),
+          };
+        }
         timing.verifications += performance.now() - verifyStart;
         timing.verificationCount++;
         candidatesVerified++;
@@ -984,7 +1125,7 @@ export function plan(
         logger.log({
           type: "verification_end",
           iteration,
-          fix: { name: fix.fixName, description: fix.description },
+          fix: { name: candidate.fixName, description: candidate.description },
           result: { delta: result.delta, targetFixed: result.targetFixed },
           budget: {
             used: candidatesVerified,
@@ -1019,7 +1160,7 @@ export function plan(
 
           // Is this the best fix so far?
           if (!bestFix || score > bestFix.score) {
-            bestFix = { diagnostic, fix, result, risk, score };
+            bestFix = { diagnostic, candidate, result, risk, score };
           }
         } else {
           // Delta scoring (default)
@@ -1030,7 +1171,7 @@ export function plan(
 
           // Is this the best fix so far?
           if (!bestFix || result.delta > bestFix.result.delta) {
-            bestFix = { diagnostic, fix, result, risk, score: result.delta };
+            bestFix = { diagnostic, candidate, result, risk, score: result.delta };
           }
         }
 
@@ -1053,29 +1194,40 @@ export function plan(
 
     // Commit the best fix
     opts.onProgress?.(
-      `Applying ${bestFix.fix.fixName}: ${bestFix.result.errorsBefore} → ${bestFix.result.errorsAfter} errors`
+      `Applying ${bestFix.candidate.fixName}: ${bestFix.result.errorsBefore} → ${bestFix.result.errorsAfter} errors`
     );
 
-    host.applyFix(bestFix.fix);
+    // Apply the candidate fix
+    if (bestFix.candidate.kind === "tsCodeFix") {
+      host.applyFix(bestFix.candidate.action);
+    } else {
+      applyCandidate(host.getVFS(), bestFix.candidate);
+      const modFiles = getCandidateFilesModified(bestFix.candidate);
+      host.notifySpecificFilesChanged(modFiles);
+    }
 
     logger.log({
       type: "fix_committed",
       iteration,
-      fix: { name: bestFix.fix.fixName, description: bestFix.fix.description },
+      fix: { name: bestFix.candidate.fixName, description: bestFix.candidate.description },
       result: {
         delta: bestFix.result.delta,
         targetFixed: bestFix.result.targetFixed,
       },
     });
 
-    const changes = toFileChanges(bestFix.fix);
+    // Get changes from the candidate
+    const changes =
+      bestFix.candidate.kind === "tsCodeFix"
+        ? toFileChanges(bestFix.candidate.action)
+        : bestFix.candidate.changes;
     const diagnosticRef = toDiagnosticRef(bestFix.diagnostic);
 
     steps.push({
       id: `fix-${fixId++}`,
       diagnostic: diagnosticRef,
-      fixName: bestFix.fix.fixName,
-      fixDescription: bestFix.fix.description,
+      fixName: bestFix.candidate.fixName,
+      fixDescription: bestFix.candidate.description,
       changes,
       errorsBefore: bestFix.result.errorsBefore,
       errorsAfter: bestFix.result.errorsAfter,
@@ -1089,10 +1241,7 @@ export function plan(
 
     // OPTIMIZATION: Only check files modified by this fix, not all files with errors
     // This reduces post-fix diagnostic time from ~3-4s to ~0.1-0.2s per fix
-    const modifiedFiles = new Set<string>();
-    for (const change of bestFix.fix.changes) {
-      modifiedFiles.add(change.fileName);
-    }
+    const modifiedFiles = getCandidateFilesModified(bestFix.candidate);
 
     // Invalidate caches for modified files
     invalidateCacheForFiles(modifiedFiles);
@@ -1198,6 +1347,42 @@ export function plan(
 }
 
 /**
+ * Get all candidates for a diagnostic (standalone version for classification).
+ * Used by classifySingleDiagnostic when called outside the planning loop.
+ */
+function getAllCandidatesForClassification(
+  host: TypeScriptHost,
+  diagnostic: ts.Diagnostic,
+  filesWithErrors: Set<string>,
+  allDiagnostics: ts.Diagnostic[],
+  opts: PlanOptions
+): CandidateFix[] {
+  const candidates: CandidateFix[] = [];
+
+  // 1. Get TypeScript code fixes and wrap them
+  const tsFixes = host.getCodeFixes(diagnostic);
+  for (const fix of tsFixes) {
+    candidates.push(wrapTsCodeFix(fix));
+  }
+
+  // 2. Get builder-generated candidates if enabled
+  const registry = opts.builderRegistry ?? defaultRegistry;
+  if (opts.useBuilders && registry.getAll().length > 0) {
+    const ctx = createBuilderContext(
+      diagnostic,
+      host,
+      filesWithErrors,
+      allDiagnostics
+    );
+    const builderCandidates = registry.generateCandidates(ctx);
+    candidates.push(...builderCandidates);
+  }
+
+  // 3. Deduplicate across sources
+  return deduplicateCandidates(candidates);
+}
+
+/**
  * Classify a single diagnostic by checking its available fixes
  */
 function classifySingleDiagnostic(
@@ -1206,11 +1391,25 @@ function classifySingleDiagnostic(
   allDiagnostics: ts.Diagnostic[],
   opts: PlanOptions,
   diagnosticKeys: Set<string>,
-  diagnosticKeysArray: string[]
+  diagnosticKeysArray: string[],
+  filesWithErrors?: Set<string>
 ): { disposition: ClassifiedDiagnostic["disposition"]; candidateCount: number } {
-  const fixes = host.getCodeFixes(diagnostic);
+  // Build filesWithErrors set if not provided
+  const effectiveFilesWithErrors = filesWithErrors ?? new Set(
+    allDiagnostics
+      .filter((d) => d.file)
+      .map((d) => d.file!.fileName)
+  );
 
-  if (fixes.length === 0) {
+  const candidates = getAllCandidatesForClassification(
+    host,
+    diagnostic,
+    effectiveFilesWithErrors,
+    allDiagnostics,
+    opts
+  );
+
+  if (candidates.length === 0) {
     return { disposition: "NoGeneratedCandidate", candidateCount: 0 };
   }
 
@@ -1219,9 +1418,64 @@ function classifySingleDiagnostic(
   let hasLowRiskFix = false;
   let validFixCount = 0;
 
-  for (const fix of fixes.slice(0, opts.maxCandidates)) {
-    const result = verify(host, diagnostic, fix, allDiagnostics, diagnosticKeys, diagnosticKeysArray);
-    const risk = assessRisk(fix.fixName);
+  for (const candidate of candidates.slice(0, opts.maxCandidates)) {
+    // Use the old verify() for tsCodeFix, verifyWithCone for synthetic
+    let result: VerificationResult;
+    if (candidate.kind === "tsCodeFix") {
+      result = verify(
+        host,
+        diagnostic,
+        candidate.action,
+        allDiagnostics,
+        diagnosticKeys,
+        diagnosticKeysArray
+      );
+    } else {
+      // For synthetic fixes, use verify with a manually constructed result
+      // This is a simplified verification - in production we'd use verifyWithCone
+      const vfs = host.getVFS();
+      const snapshot = vfs.snapshot();
+
+      // Apply candidate
+      applyCandidate(vfs, candidate);
+      const modifiedFiles = getCandidateFilesModified(candidate);
+      host.notifySpecificFilesChanged(modifiedFiles);
+
+      // Get diagnostics after
+      const diagnosticsAfter = host.getDiagnosticsForFiles(modifiedFiles);
+
+      // Restore
+      vfs.restore(snapshot);
+      host.notifySpecificFilesChanged(modifiedFiles);
+
+      // Check if target was fixed
+      const targetKey = `${diagnostic.file?.fileName ?? "<unknown>"}::${diagnostic.code}::${ts.flattenDiagnosticMessageText(diagnostic.messageText, " ")}`;
+      const afterKeys = new Set(
+        diagnosticsAfter.map(
+          (d) =>
+            `${d.file?.fileName ?? "<unknown>"}::${d.code}::${ts.flattenDiagnosticMessageText(d.messageText, " ")}`
+        )
+      );
+      const targetFixed = !afterKeys.has(targetKey);
+
+      result = {
+        targetFixed,
+        errorsBefore: allDiagnostics.length,
+        errorsAfter: diagnosticsAfter.length,
+        delta: allDiagnostics.length - diagnosticsAfter.length,
+        newDiagnostics: diagnosticsAfter.filter(
+          (d) =>
+            !diagnosticKeys.has(
+              `${d.file?.fileName ?? "<unknown>"}::${d.code}::${ts.flattenDiagnosticMessageText(d.messageText, " ")}`
+            )
+        ),
+        resolvedWeight: 0, // Simplified
+        introducedWeight: 0, // Simplified
+        editSize: computeCandidateEditSize(candidate),
+      };
+    }
+
+    const risk = candidate.riskHint ?? assessRisk(candidate.fixName);
 
     // Skip high-risk fixes if not allowed
     if (risk === "high" && !opts.includeHighRisk) {
@@ -1253,7 +1507,7 @@ function classifySingleDiagnostic(
   }
 
   if (validFixCount === 0) {
-    return { disposition: "NoVerifiedCandidate", candidateCount: fixes.length };
+    return { disposition: "NoVerifiedCandidate", candidateCount: candidates.length };
   } else if (validFixCount > 1) {
     return { disposition: "NeedsJudgment", candidateCount: validFixCount };
   } else if (hasLowRiskFix) {
@@ -1285,6 +1539,14 @@ function classifyRemaining(
     groups.set(key, group);
   }
 
+  // Build filesWithErrors for builder context
+  const filesWithErrors = new Set<string>();
+  for (const diag of diagnostics) {
+    if (diag.file) {
+      filesWithErrors.add(diag.file.fileName);
+    }
+  }
+
   // OPTIMIZATION: Pre-compute diagnostic keys once for all verifications
   const diagnosticKeysArray = diagnostics.map(diagnosticKey);
   const diagnosticKeys = new Set(diagnosticKeysArray);
@@ -1307,7 +1569,8 @@ function classifyRemaining(
       diagnostics,
       opts,
       diagnosticKeys,
-      diagnosticKeysArray
+      diagnosticKeysArray,
+      filesWithErrors
     );
 
     // Apply same classification to all group members
@@ -1374,3 +1637,12 @@ export {
   validatePolicy,
 } from "./policy.js";
 export { createReverseDepsLookup, getApproximateReverseDeps } from "./typescript.js";
+
+// Re-export vNext builder framework
+export {
+  BuilderRegistry,
+  createBuilderContext,
+  defaultRegistry,
+  registerBuilder,
+  findNodeAtPosition,
+} from "./builder.js";

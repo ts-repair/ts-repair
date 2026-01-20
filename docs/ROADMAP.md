@@ -15,52 +15,106 @@ This roadmap tracks the implementation of ts-repair as an **oracle-guided TypeSc
 
 ## vNext: Repair Framework (Higher Priority)
 
-### Phase 0: Foundations
+### Phase 0: Foundations ✅ Complete
 
-- Introduce unified `CandidateFix` abstraction for TS codefix + synthetic edits.
-- Implement shared apply/normalize pipeline (edits, metadata, dependency tracking).
-- Add verification cone plumbing with comparable before/after diagnostics.
-- Cache cone diagnostics per iteration by cone signature.
-- Add verification policy API to make scope and invalidation configurable.
+Unified candidate abstraction and verification infrastructure.
 
-**Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
+| Component | Status | Notes |
+|-----------|--------|-------|
+| `CandidateFix` type | ✅ Done | Union type for tsCodeFix + synthetic candidates |
+| `wrapTsCodeFix()` helper | ✅ Done | Wrap TS CodeFixAction as CandidateFix |
+| `createSyntheticFix()` helper | ✅ Done | Create synthetic candidates with metadata |
+| `getFilesModified()` | ✅ Done | Extract modified files from any candidate |
+| `getChanges()` | ✅ Done | Extract FileChange[] from any candidate |
+| `applyCandidate()` | ✅ Done | Apply candidate to VFS with normalization |
+| `normalizeEdits()` | ✅ Done | Sort and dedupe edits for safe application |
+| `computeCandidateEditSize()` | ✅ Done | Calculate edit size for scoring |
+| `getCandidateKey()` | ✅ Done | Generate unique key for deduplication |
+| `deduplicateCandidates()` | ✅ Done | Remove duplicate candidates across sources |
+| `VerificationScopeHint` type | ✅ Done | Scope hints: modified, errors, wide |
+| `VerificationPolicy` type | ✅ Done | Policy for cone construction and caching |
+| `buildCone()` | ✅ Done | Build verification cone from modified files |
+| `ConeCache` | ✅ Done | Cache diagnostics by cone signature |
+| `verifyWithCone()` | ✅ Done | Unified verification using cone-based approach |
+| Policy presets | ✅ Done | DEFAULT_POLICY, STRUCTURAL_POLICY, WIDE_POLICY |
+| `mergePolicy()` | ✅ Done | Merge partial policy with defaults |
+| Reverse deps lookup | ✅ Done | `getApproximateReverseDeps()` for cone expansion |
 
-### Phase 1: Builder Framework + Routing
-
-- Add `SolutionBuilder` interface and registry.
-- Implement routing based on diagnostic code/message + AST node kind.
-- Merge, dedupe, and prune candidates from TS + builders.
-- Extend classification to include synthetic candidates.
-
-**Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
-
-### Phase 2: Overload Repair Builder
-
-- Implement overload mismatch detection and definition lookup.
-- Generate bounded candidates (widen overload params, add overload template).
-- Mark candidates with `scopeHint` and high-risk label.
-- Add targeted fixtures for overload regression cascades.
-- Benchmark target: tRPC structural failure (Benchmark v2) to validate root-cause repair.
-
-**Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
-
-### Phase 3: Cone Refinement + Guardrails
-
-- Heuristic cone expansion for structural edits.
-- Reverse-deps approximation or top-K error file expansion.
-- Memory guards (periodic host reset, cone size caps).
-- Instrument verification time, cone size, and hit-rate.
-- Adopt policy-based host invalidation and post-commit diagnostics refresh.
-- Benchmark requirement: cone sizes and verification time remain bounded on tRPC-scale workloads.
+**Location:** `src/oracle/candidate.ts`, `src/oracle/cone.ts`, `src/oracle/policy.ts`, `src/output/types.ts`
 
 **Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
 
-### Phase 4: Additional Builders (Benchmark-Driven)
+### Phase 1: Builder Framework + Routing ✅ Complete
 
-- Generic constraint repair builder.
-- Conditional type distribution builder.
-- Instantiation depth builder.
-- Module config/specifier normalization builder.
+Pluggable builder framework for synthetic repair candidates.
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| `SolutionBuilder` interface | ✅ Done | name, description, diagnosticCodes, messagePatterns, matches(), generate() |
+| `BuilderContext` interface | ✅ Done | diagnostic, host, filesWithErrors, AST access |
+| `BuilderMatchResult` type | ✅ Done | For debugging/logging match results |
+| `BuilderRegistry` class | ✅ Done | Register, index, and query builders |
+| `register()` | ✅ Done | Add builder with code/pattern indexing |
+| `getCandidateBuilders()` | ✅ Done | O(1) lookup by diagnostic code |
+| `getMatchingBuilders()` | ✅ Done | Filter by matches() result |
+| `generateCandidates()` | ✅ Done | Collect candidates from all matching builders |
+| `createBuilderContext()` | ✅ Done | Factory with lazy AST loading |
+| `findNodeAtPosition()` | ✅ Done | Helper for AST node lookup |
+| `defaultRegistry` singleton | ✅ Done | Global registry for convenience |
+| `registerBuilder()` helper | ✅ Done | Register to default registry |
+| Planner integration | ✅ Done | `getAllCandidates()` merges TS + builder candidates |
+| `pruneCandidatesUnified()` | ✅ Done | Prune CandidateFix[] by risk/size |
+| `assessRisk()` with riskHint | ✅ Done | Use builder hint or assess from fixName |
+| Classification integration | ✅ Done | `classifySingleDiagnostic()` includes builders |
+| `useBuilders` option | ✅ Done | Enable/disable builder candidates (default: true) |
+| `builderRegistry` option | ✅ Done | Custom registry support |
+| Builder tests | ✅ Done | Comprehensive unit tests for registry and context |
+
+**Location:** `src/oracle/builder.ts`, `src/oracle/planner.ts`, `tests/oracle/builder.test.ts`
+
+**Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
+
+### Phase 2: Overload Repair Builder 📋 Planned
+
+First concrete builder implementation targeting overload mismatch errors.
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Overload mismatch detection | 📋 Planned | Detect TS2769 and related codes |
+| Definition lookup | 📋 Planned | Find overload signatures at call site |
+| Widen parameter candidates | 📋 Planned | Generate parameter widening fixes |
+| Add overload template | 📋 Planned | Generate new overload signature |
+| `scopeHint: "wide"` | 📋 Planned | Mark structural candidates |
+| `riskHint: "high"` | 📋 Planned | Mark semantic risk |
+| Overload fixtures | 📋 Planned | Test cases for overload cascades |
+| Benchmark validation | 📋 Planned | tRPC structural failure test |
+
+**Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
+
+### Phase 3: Cone Refinement + Guardrails 📋 Planned
+
+Robust verification for structural edits at scale.
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Heuristic cone expansion | 📋 Planned | Smart expansion for structural edits |
+| Top-K error file expansion | 📋 Planned | Cap cone size intelligently |
+| Memory guards | 📋 Planned | Periodic host reset, cone caps |
+| Verification instrumentation | 📋 Planned | Time, cone size, cache hit-rate |
+| tRPC-scale validation | 📋 Planned | Bounded verification at scale |
+
+**Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
+
+### Phase 4: Additional Builders (Benchmark-Driven) 📋 Planned
+
+Additional builders based on benchmark-identified gaps.
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Generic constraint repair | 📋 Planned | Handle constraint violations |
+| Conditional type distribution | 📋 Planned | Handle distributive conditionals |
+| Instantiation depth | 📋 Planned | Handle deep type instantiation |
+| Module config normalization | 📋 Planned | Handle module specifier issues |
 
 **Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
 
@@ -443,6 +497,18 @@ ts-repair/
 
 ## Timeline
 
+### vNext Phases (Higher Priority)
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| vNext Phase 0 | ✅ Done | Foundations (CandidateFix, cones, policy) |
+| vNext Phase 1 | ✅ Done | Builder framework + routing |
+| vNext Phase 2 | 📋 Planned | Overload repair builder |
+| vNext Phase 3 | 📋 Planned | Cone refinement + guardrails |
+| vNext Phase 4 | 📋 Planned | Additional builders (benchmark-driven) |
+
+### Core Phases
+
 | Phase | Status | Notes |
 |-------|--------|-------|
 | Phase 1 | ✅ Done | Prototype working |
@@ -528,5 +594,5 @@ TypeScript's code fix suggestions sometimes prefer re-export paths (e.g., `impor
 
 ---
 
-*Last updated: January 18, 2026*
-*Phases 1-4, 2.5-2.7, 6 complete. Next: Phase 5 (Solver) or Phase 7 (Protocol Specification).*
+*Last updated: January 20, 2026*
+*Phases 1-4, 2.5-2.7, 6 complete. vNext Phases 0-1 complete. Next: vNext Phase 2 (Overload Repair Builder).*
