@@ -66,6 +66,48 @@ This roadmap tracks the implementation of ts-repair as an **oracle-guided TypeSc
 
 ---
 
+## vNext: Scalability Improvements
+
+Targets for algorithmic cost as repo size or error count grows. Notes reflect current bounds (default `maxIterations=50`, `maxVerifications=500`), so some items are medium-term unless limits increase.
+
+### Priority
+
+1. **Batching + conflict lookups (quick wins)**
+   - Convert `conflictsWith` / `requires` checks to `Set.has()` for O(1) membership in `canJoinBatch()`.
+   - Rework batch placement to avoid repeated scans over batch members.
+   - **Location:** `src/oracle/planner.ts:490-568`
+
+2. **Cache invalidation by file (reverse index)**
+   - `invalidateCacheForFiles()` scans all cache keys and splits strings.
+   - Track `Map<file, Set<cacheKey>>` for O(modified files) invalidation.
+   - **Location:** `src/oracle/planner.ts:669-676`
+
+3. **Incremental diagnostic bookkeeping**
+   - Avoid rebuilding `filesWithErrors` and filtering `currentDiagnostics` on each iteration.
+   - Maintain per-file diagnostic buckets to update by modified file only.
+   - **Location:** `src/oracle/planner.ts:981-993`
+
+4. **Dependency graph overlap analysis (bounded today)**
+   - `deriveDependencies()` is O(n² × e²) on fix steps; bounded by `maxIterations` today.
+   - Introduce per-file interval indexing (segment tree or sweep line) if limits increase.
+   - **Location:** `src/oracle/planner.ts:429-478`
+
+### Secondary Items
+
+- **No-fix invalidation scan**: clearing `diagnosticsWithNoFixes` walks the full set and splits keys each iteration. Track by file for O(modified files) invalidation. (`src/oracle/planner.ts:969-973`)
+- **Unique add in dependency loop**: `addUnique()` is O(n) but sits inside the O(n²) loop; optimize alongside dependency graph changes. (`src/oracle/planner.ts:386-390`)
+
+### Performance Targets
+
+| Metric | Current | Target |
+|--------|---------|--------|
+| Dependency overlap checks (100 fixes) | ~5000 comparisons | ~500 comparisons |
+| Batch placement (100 steps) | ~5000 checks | ~500 checks |
+| Cache invalidation (1000 files) | O(cache size) | O(modified files) |
+| Diagnostic updates (100 errors) | O(n) per iteration | O(modified files) |
+
+---
+
 ## Implementation Phases
 
 ### Phase 1: Core Oracle Loop ✅ Prototype Complete
