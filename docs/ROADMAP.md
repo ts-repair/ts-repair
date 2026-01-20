@@ -74,34 +74,45 @@ Pluggable builder framework for synthetic repair candidates.
 
 **Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
 
-### Phase 2: Overload Repair Builder 📋 Planned
+### Phase 2: Overload Repair Builder ✅ Complete
 
 First concrete builder implementation targeting overload mismatch errors.
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Overload mismatch detection | 📋 Planned | Detect TS2769 and related codes |
-| Definition lookup | 📋 Planned | Find overload signatures at call site |
-| Widen parameter candidates | 📋 Planned | Generate parameter widening fixes |
-| Add overload template | 📋 Planned | Generate new overload signature |
-| `scopeHint: "wide"` | 📋 Planned | Mark structural candidates |
-| `riskHint: "high"` | 📋 Planned | Mark semantic risk |
-| Overload fixtures | 📋 Planned | Test cases for overload cascades |
-| Benchmark validation | 📋 Planned | tRPC structural failure test |
+| Overload mismatch detection | ✅ Done | Detect TS2769 at call expressions |
+| Definition lookup | ✅ Done | Find overload signatures across project files |
+| Add overload template | ✅ Done | Generate compatible overload signature from impl params |
+| Duplicate detection | ✅ Done | Prevent infinite loops by checking existing overloads |
+| `scopeHint: "wide"` | ✅ Done | Triggers cone-based verification with reverse deps |
+| `riskHint: "high"` | ✅ Done | Requires `--include-high-risk` flag |
+| Overload fixtures | ✅ Done | `tests/fixtures/overload-mismatch/` |
+| Builder tests | ✅ Done | `tests/oracle/builders/overload.test.ts` |
+| CLI integration | ✅ Done | `registerBuiltinBuilders()` in cli.ts |
+| Cone-based verification | ✅ Done | `verifyWithCone()` for synthetic candidates |
+
+**Location:** `src/oracle/builders/overload.ts`, `src/oracle/builders/index.ts`
 
 **Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
 
-### Phase 3: Cone Refinement + Guardrails 📋 Planned
+### Phase 3: Cone Refinement + Guardrails ✅ Complete
 
 Robust verification for structural edits at scale.
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Heuristic cone expansion | 📋 Planned | Smart expansion for structural edits |
-| Top-K error file expansion | 📋 Planned | Cap cone size intelligently |
-| Memory guards | 📋 Planned | Periodic host reset, cone caps |
-| Verification instrumentation | 📋 Planned | Time, cone size, cache hit-rate |
-| tRPC-scale validation | 📋 Planned | Bounded verification at scale |
+| `rankErrorFiles()` | ✅ Done | Score error files by relationship to modified files |
+| Top-K error file expansion | ✅ Done | Cap cone size with ranked selection |
+| `ConeCache` LRU eviction | ✅ Done | Bounded cache with hit/miss tracking |
+| `MemoryGuard` class | ✅ Done | Periodic host reset to prevent memory growth |
+| `refreshLanguageService()` | ✅ Done | Enable memory reclamation in TypeScriptHost |
+| `TelemetryCollector` class | ✅ Done | Track verifications, timing, cone sizes, cache stats |
+| `--telemetry` CLI flag | ✅ Done | Output verification performance stats |
+| `enableTelemetry` option | ✅ Done | Enable telemetry in RepairRequest |
+| `memoryConfig` option | ✅ Done | Configure memory guard in RepairRequest |
+| Memory/telemetry tests | ✅ Done | Unit tests + stress tests |
+
+**Location:** `src/oracle/cone.ts`, `src/oracle/memory.ts`, `src/oracle/telemetry.ts`, `src/oracle/planner.ts`
 
 **Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
 
@@ -503,8 +514,8 @@ ts-repair/
 |-------|--------|-------|
 | vNext Phase 0 | ✅ Done | Foundations (CandidateFix, cones, policy) |
 | vNext Phase 1 | ✅ Done | Builder framework + routing |
-| vNext Phase 2 | 📋 Planned | Overload repair builder |
-| vNext Phase 3 | 📋 Planned | Cone refinement + guardrails |
+| vNext Phase 2 | ✅ Done | Overload repair builder |
+| vNext Phase 3 | ✅ Done | Cone refinement + guardrails |
 | vNext Phase 4 | 📋 Planned | Additional builders (benchmark-driven) |
 
 ### Core Phases
@@ -595,4 +606,4 @@ TypeScript's code fix suggestions sometimes prefer re-export paths (e.g., `impor
 ---
 
 *Last updated: January 20, 2026*
-*Phases 1-4, 2.5-2.7, 6 complete. vNext Phases 0-1 complete. Next: vNext Phase 2 (Overload Repair Builder).*
+*Phases 1-4, 2.5-2.7, 6 complete. vNext Phases 0-3 complete. Next: vNext Phase 4 (Additional Builders).*
