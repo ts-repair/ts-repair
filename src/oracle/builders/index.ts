@@ -7,13 +7,18 @@
 
 import { registerBuilder } from "../builder.js";
 import { OverloadRepairBuilder } from "./overload.js";
+import { ModuleExtensionBuilder } from "./module-extension.js";
 
 export { OverloadRepairBuilder } from "./overload.js";
+export { ModuleExtensionBuilder } from "./module-extension.js";
 
 /**
  * All built-in builders as an array for iteration.
  */
-export const builtinBuilders = [OverloadRepairBuilder] as const;
+export const builtinBuilders = [
+  OverloadRepairBuilder,
+  ModuleExtensionBuilder,
+] as const;
 
 /**
  * Register all built-in builders with the default registry.

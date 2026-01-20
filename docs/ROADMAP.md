@@ -116,16 +116,18 @@ Robust verification for structural edits at scale.
 
 **Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
 
-### Phase 4: Additional Builders (Benchmark-Driven) 📋 Planned
+### Phase 4: Additional Builders (Benchmark-Driven) 🔄 In Progress
 
 Additional builders based on benchmark-identified gaps.
 
 | Component | Status | Notes |
 |-----------|--------|-------|
+| Module extension repair | ✅ Done | TS2835: Add `.js` extensions to ESM imports |
 | Generic constraint repair | 📋 Planned | Handle constraint violations |
 | Conditional type distribution | 📋 Planned | Handle distributive conditionals |
 | Instantiation depth | 📋 Planned | Handle deep type instantiation |
-| Module config normalization | 📋 Planned | Handle module specifier issues |
+
+**Location:** `src/oracle/builders/module-extension.ts`
 
 **Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
 
@@ -516,7 +518,7 @@ ts-repair/
 | vNext Phase 1 | ✅ Done | Builder framework + routing |
 | vNext Phase 2 | ✅ Done | Overload repair builder |
 | vNext Phase 3 | ✅ Done | Cone refinement + guardrails |
-| vNext Phase 4 | 📋 Planned | Additional builders (benchmark-driven) |
+| vNext Phase 4 | 🔄 In Progress | Additional builders (ModuleExtensionBuilder done) |
 
 ### Core Phases
 
@@ -606,4 +608,4 @@ TypeScript's code fix suggestions sometimes prefer re-export paths (e.g., `impor
 ---
 
 *Last updated: January 20, 2026*
-*Phases 1-4, 2.5-2.7, 6 complete. vNext Phases 0-3 complete. Next: vNext Phase 4 (Additional Builders).*
+*Phases 1-4, 2.5-2.7, 6 complete. vNext Phases 0-3 complete. vNext Phase 4 in progress (ModuleExtensionBuilder done).*
