@@ -9,6 +9,61 @@
 
 This roadmap tracks the implementation of ts-repair as an **oracle-guided TypeScript repair engine**. The system uses the TypeScript compiler as a verification oracle to produce verified, ranked repair plans for agents.
 
+**Priority note:** The vNext roadmap items below are higher priority than the long-term phases that follow. See `docs/VNEXT-REPAIR-FRAMEWORK.md` for the design context and constraints.
+
+---
+
+## vNext: Repair Framework (Higher Priority)
+
+### Phase 0: Foundations
+
+- Introduce unified `CandidateFix` abstraction for TS codefix + synthetic edits.
+- Implement shared apply/normalize pipeline (edits, metadata, dependency tracking).
+- Add verification cone plumbing with comparable before/after diagnostics.
+- Cache cone diagnostics per iteration by cone signature.
+- Add verification policy API to make scope and invalidation configurable.
+
+**Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
+
+### Phase 1: Builder Framework + Routing
+
+- Add `SolutionBuilder` interface and registry.
+- Implement routing based on diagnostic code/message + AST node kind.
+- Merge, dedupe, and prune candidates from TS + builders.
+- Extend classification to include synthetic candidates.
+
+**Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
+
+### Phase 2: Overload Repair Builder
+
+- Implement overload mismatch detection and definition lookup.
+- Generate bounded candidates (widen overload params, add overload template).
+- Mark candidates with `scopeHint` and high-risk label.
+- Add targeted fixtures for overload regression cascades.
+- Benchmark target: tRPC structural failure (Benchmark v2) to validate root-cause repair.
+
+**Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
+
+### Phase 3: Cone Refinement + Guardrails
+
+- Heuristic cone expansion for structural edits.
+- Reverse-deps approximation or top-K error file expansion.
+- Memory guards (periodic host reset, cone size caps).
+- Instrument verification time, cone size, and hit-rate.
+- Adopt policy-based host invalidation and post-commit diagnostics refresh.
+- Benchmark requirement: cone sizes and verification time remain bounded on tRPC-scale workloads.
+
+**Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
+
+### Phase 4: Additional Builders (Benchmark-Driven)
+
+- Generic constraint repair builder.
+- Conditional type distribution builder.
+- Instantiation depth builder.
+- Module config/specifier normalization builder.
+
+**Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
+
 ---
 
 ## Implementation Phases

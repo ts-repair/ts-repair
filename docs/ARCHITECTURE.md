@@ -12,7 +12,7 @@ At a high level, ts-repair is an optimizing "repair pass" over a TypeScript proj
 - Oracle: TypeScript LanguageService + Program type-checking
 - Output: Verified Repair Plan (ordered edits) + per-diagnostic dispositions
 
-This matches the roadmap's core structure (VFS → TS LS/Oracle → Planner → Classifier → Plan Output).
+The system is a repair framework: it unifies TypeScript codefixes with synthetic candidates, verifies them with a compiler oracle, and preserves a hard line against intentful changes. See `docs/VNEXT-REPAIR-FRAMEWORK.md` for vNext constraints.
 
 ## Major Components
 
@@ -46,25 +46,27 @@ Responsibilities:
 
 Important: ts-repair does not "trust" a suggested fix. It only trusts the oracle's measured delta after applying it.
 
-### 4) Candidate Generators
+### 4) Candidate Generation
 Candidate generation is intentionally pluggable and split into sources.
 
 Primary sources:
-- tsserver codefixes (`getCodeFixesAtPosition`) for fast baseline coverage
-- Deterministic repair recipes for high-leverage cases TS does not fix (imports, renames, cross-file consistency patterns)
+- TypeScript LanguageService codefixes (`getCodeFixesAtPosition`) for baseline coverage.
+- Synthetic solution builders for non-lexical failures (structural edits that are still mechanical).
 
 Output:
-- A set of `RepairCandidate` objects with edits and intended targets (may be multi-diagnostic)
+- A unified `CandidateFix` set with edits and intended targets (may be multi-diagnostic).
 
 ### 5) Verification Engine
 The engine that turns candidates into verified claims.
 
 For each candidate:
 1. Snapshot VFS state
-2. Apply candidate edits
-3. Re-run typecheck
-4. Compute `verifiedDelta` (resolved vs introduced diagnostics)
-5. Restore snapshot
+2. Compute the verification cone for this candidate
+3. Collect `before` diagnostics over the cone
+4. Apply candidate edits
+5. Collect `after` diagnostics over the same cone
+6. Compute `verifiedDelta` (resolved vs introduced diagnostics)
+7. Restore snapshot
 
 It also derives scoring signals:
 - resolvedWeight / introducedWeight (weighted by diagnostic severity/classes)
@@ -73,7 +75,17 @@ It also derives scoring signals:
 
 Candidates without `verifiedDelta` are ineligible for selection.
 
-### 6) Disposition Classifier
+### 6) Verification Cone of Attention
+Structural edits can reduce errors in other files, so verification scopes are per-candidate.
+
+Cone construction uses:
+- Modified files (always included).
+- Files with current errors (structural default).
+- Optional wider scope using reverse-deps approximation or top-K error files.
+
+The cone is deterministic and cacheable by signature per iteration. See `docs/VNEXT-REPAIR-FRAMEWORK.md` for scope hints and guards.
+
+### 7) Disposition Classifier
 Classifies each diagnostic after candidate generation + verification.
 
 Recommended disposition contract:
@@ -84,7 +96,7 @@ Recommended disposition contract:
 
 This is the core boundary between deterministic automation and semantic decision-making.
 
-### 7) Planner
+### 8) Planner
 Selects an ordered plan of repairs.
 
 Planner modes:
@@ -97,7 +109,7 @@ Greedy properties:
 - Penalizes large diffs and risky repair classes
 - Produces a virtual plan by applying chosen candidates in-memory, re-generating candidates, and repeating until convergence or stall
 
-### 8) Solver (Fallback)
+### 9) Solver (Fallback)
 A constraint optimizer invoked only when trigger conditions are met.
 
 Model:
@@ -122,6 +134,7 @@ Minimum fields the planner/solver require:
 - `requires[]` (optional)
 - `exclusiveGroup` (optional)
 - `filesTouched[]`
+- `scopeHint` (optional; guides verification cone)
 
 These fields are derived from deterministic sources and oracle verification, not LLM judgment.
 
@@ -147,6 +160,7 @@ ts-repair trades CPU for fewer agent iterations. To keep the system bounded:
 - Incremental checking: prefer TS incremental program updates for verification.
 - Caching: cache verification results keyed by (project state hash, candidate patch hash).
 - Bounded solver window: never solve over an unbounded set.
+- Cone caps: top-K error file selection to keep verification bounded.
 
 ## Outputs
 

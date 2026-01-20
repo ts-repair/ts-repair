@@ -23,6 +23,7 @@ Provide an **oracle-driven repair system** that:
 * Minimizes agent iterations by precomputing monotonic paths to zero diagnostics
 * Guarantees no *new compiler diagnostics* are introduced by proposed fixes
 * Operates on **TypeScript source text**, while using AST internally for determinism
+* Extends candidate generation beyond TS codefixes via deterministic, mechanical builders
 
 ## Non-Goals
 
@@ -115,6 +116,7 @@ interface RepairCandidate {
 
   // Bookkeeping
   filesTouched: string[];
+  scopeHint?: 'modified' | 'errors' | 'wide';
 }
 ```
 
@@ -130,11 +132,16 @@ interface RepairCandidate {
 Verification is mandatory for all candidates:
 
 1. Clone in-memory project state
-2. Apply candidate changes
-3. Re-run incremental type check
-4. Record diagnostic delta
+2. Compute verification cone for candidate
+3. Apply candidate changes
+4. Re-run incremental type check over the cone
+5. Record diagnostic delta
 
 Candidates that introduce new diagnostics may still be retained, but are penalized or restricted by policy.
+
+### Verification Cones
+
+Structural edits can reduce errors outside the modified files. Verification uses a per-candidate cone that always includes modified files and can expand to files with errors or top-K error files depending on `scopeHint` and guardrails.
 
 ---
 
