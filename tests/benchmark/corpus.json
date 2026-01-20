@@ -1,0 +1,188 @@
+{
+  "version": "1.0.0",
+  "description": "ts-repair benchmark corpus",
+  "entries": [
+    {
+      "name": "async-await",
+      "category": "synthetic",
+      "configPath": "tests/fixtures/async-await/tsconfig.json",
+      "expectedOutcome": {
+        "minErrorReduction": 0.5,
+        "targetErrorReduction": 1.0,
+        "applicableBuilders": []
+      },
+      "metadata": {
+        "errorCodes": [1308],
+        "description": "Tests await expression in non-async function. TypeScript LS provides fix to add async modifier."
+      }
+    },
+    {
+      "name": "conditional-distribution",
+      "category": "builder-specific",
+      "configPath": "tests/fixtures/conditional-distribution/tsconfig.json",
+      "expectedOutcome": {
+        "minErrorReduction": 0.5,
+        "targetErrorReduction": 1.0,
+        "applicableBuilders": ["ConditionalTypeDistributionBuilder"]
+      },
+      "metadata": {
+        "errorCodes": [2322],
+        "description": "Tests distributive conditional type mismatch. Return type is Filter<T, string> but trying to return concrete string."
+      }
+    },
+    {
+      "name": "generic-constraint",
+      "category": "builder-specific",
+      "configPath": "tests/fixtures/generic-constraint/tsconfig.json",
+      "expectedOutcome": {
+        "minErrorReduction": 0.5,
+        "targetErrorReduction": 1.0,
+        "applicableBuilders": ["GenericConstraintBuilder"]
+      },
+      "metadata": {
+        "errorCodes": [2344],
+        "description": "Tests generic type constraint violation. User interface missing required 'id' property from HasId constraint."
+      }
+    },
+    {
+      "name": "instantiation-depth",
+      "category": "builder-specific",
+      "configPath": "tests/fixtures/instantiation-depth/tsconfig.json",
+      "expectedOutcome": {
+        "minErrorReduction": 0.5,
+        "targetErrorReduction": 1.0,
+        "applicableBuilders": ["InstantiationDepthBuilder"]
+      },
+      "metadata": {
+        "errorCodes": [2589],
+        "description": "Tests excessively deep type instantiation. InfiniteRecurse type triggers TS2589 due to recursive type definition."
+      }
+    },
+    {
+      "name": "missing-import",
+      "category": "synthetic",
+      "configPath": "tests/fixtures/missing-import/tsconfig.json",
+      "expectedOutcome": {
+        "minErrorReduction": 0.8,
+        "targetErrorReduction": 1.0,
+        "applicableBuilders": []
+      },
+      "metadata": {
+        "errorCodes": [2552],
+        "description": "Tests missing import with available local export. formatDate and parseDate used without import from helpers.ts."
+      }
+    },
+    {
+      "name": "module-extension",
+      "category": "builder-specific",
+      "configPath": "tests/fixtures/module-extension/tsconfig.json",
+      "expectedOutcome": {
+        "minErrorReduction": 0.8,
+        "targetErrorReduction": 1.0,
+        "applicableBuilders": ["ModuleExtensionBuilder"]
+      },
+      "metadata": {
+        "errorCodes": [2835],
+        "description": "Tests missing .js extension in ESM import with NodeNext module resolution."
+      }
+    },
+    {
+      "name": "multi-file-import",
+      "category": "synthetic",
+      "configPath": "tests/fixtures/multi-file-import/tsconfig.json",
+      "expectedOutcome": {
+        "minErrorReduction": 0.3,
+        "targetErrorReduction": 1.0,
+        "applicableBuilders": []
+      },
+      "metadata": {
+        "errorCodes": [2304, 18046],
+        "description": "Tests missing imports across multiple files. HTTPError used in fileA.ts and fileB.ts without importing from errors.ts."
+      }
+    },
+    {
+      "name": "multiple-errors",
+      "category": "synthetic",
+      "configPath": "tests/fixtures/multiple-errors/tsconfig.json",
+      "expectedOutcome": {
+        "minErrorReduction": 0.5,
+        "targetErrorReduction": 1.0,
+        "applicableBuilders": []
+      },
+      "metadata": {
+        "errorCodes": [2304],
+        "description": "Tests multiple different error types: missing imports for add and Config, plus a spelling error (nmae vs name)."
+      }
+    },
+    {
+      "name": "no-errors",
+      "category": "synthetic",
+      "configPath": "tests/fixtures/no-errors/tsconfig.json",
+      "expectedOutcome": {
+        "minErrorReduction": 1.0,
+        "targetErrorReduction": 1.0,
+        "applicableBuilders": []
+      },
+      "metadata": {
+        "errorCodes": [],
+        "description": "Clean fixture with no TypeScript errors. Used to verify correct handling of already-valid code."
+      }
+    },
+    {
+      "name": "no-fixes-available",
+      "category": "synthetic",
+      "configPath": "tests/fixtures/no-fixes-available/tsconfig.json",
+      "expectedOutcome": {
+        "minErrorReduction": 0.0,
+        "targetErrorReduction": 0.0,
+        "applicableBuilders": []
+      },
+      "metadata": {
+        "errorCodes": [2355, 2304],
+        "description": "Tests errors with no automated fixes: missing return statement (TS2355) and completely unknown identifier (TS2304)."
+      }
+    },
+    {
+      "name": "overload-mismatch",
+      "category": "builder-specific",
+      "configPath": "tests/fixtures/overload-mismatch/tsconfig.json",
+      "expectedOutcome": {
+        "minErrorReduction": 0.5,
+        "targetErrorReduction": 1.0,
+        "applicableBuilders": ["OverloadRepairBuilder"]
+      },
+      "metadata": {
+        "errorCodes": [2769],
+        "description": "Tests function overload mismatch. Calling process() with (boolean | string)[] which matches no overload signature."
+      }
+    },
+    {
+      "name": "spelling-error",
+      "category": "synthetic",
+      "configPath": "tests/fixtures/spelling-error/tsconfig.json",
+      "expectedOutcome": {
+        "minErrorReduction": 0.8,
+        "targetErrorReduction": 1.0,
+        "applicableBuilders": []
+      },
+      "metadata": {
+        "errorCodes": [2339],
+        "description": "Tests property spelling error. Accessing user.naem instead of user.name, TypeScript suggests correction."
+      }
+    },
+    {
+      "name": "type-mismatch",
+      "category": "synthetic",
+      "configPath": "tests/fixtures/type-mismatch/tsconfig.json",
+      "expectedOutcome": {
+        "minErrorReduction": 0.0,
+        "targetErrorReduction": 0.5,
+        "applicableBuilders": []
+      },
+      "metadata": {
+        "errorCodes": [2322],
+        "description": "Tests basic type mismatch: assigning string to number variable. May require type coercion or code restructuring."
+      }
+    }
+  ]
+}
