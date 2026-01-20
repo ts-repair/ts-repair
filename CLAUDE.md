@@ -32,9 +32,10 @@ mise run check && mise run test
 # 4. STOP — Wait for user review before merging
 #    Do NOT merge to main automatically
 
-# 5. After user approves, merge to main (from main worktree)
+# 5. After user approves, squash merge to main (from main worktree)
 cd ../ts-repair
-git merge feature-name
+git merge --squash feature-name
+git commit
 
 # 6. Clean up worktree and branch
 git worktree remove ../ts-repair-feature-name
@@ -44,6 +45,7 @@ git branch -d feature-name
 **Important workflow:**
 - After implementing a feature, **wait for user review** before merging
 - Only merge to main after the user has reviewed and approved the changes
+- Always use **squash merge** (`git merge --squash`) to keep main history clean
 - After merging, always clean up the worktree and branch
 
 ---
