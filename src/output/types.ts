@@ -219,3 +219,83 @@ export interface BudgetPreview {
     estimatedCost: number;
   }>;
 }
+
+// ============================================================================
+// vNext: Verification Scope and Candidates
+// ============================================================================
+
+/**
+ * Verification scope hints for cone construction.
+ * Controls how wide the verification checks after applying a fix.
+ *
+ * - "modified": Only check files modified by the fix (fastest)
+ * - "errors": Check modified files + files with existing errors
+ * - "wide": Check modified + errors + reverse dependencies (structural changes)
+ */
+export type VerificationScopeHint = "modified" | "errors" | "wide";
+
+/**
+ * Unified candidate representation for all fix types.
+ * Supports both TypeScript language service fixes and synthetic fixes.
+ */
+export type CandidateFix =
+  | {
+      kind: "tsCodeFix";
+      fixName: string;
+      description: string;
+      action: import("typescript").CodeFixAction;
+      scopeHint?: VerificationScopeHint;
+      riskHint?: "low" | "medium" | "high";
+      tags?: string[];
+    }
+  | {
+      kind: "synthetic";
+      fixName: string;
+      description: string;
+      changes: FileChange[];
+      scopeHint?: VerificationScopeHint;
+      riskHint?: "low" | "medium" | "high";
+      tags?: string[];
+      metadata?: Record<string, unknown>;
+    };
+
+// ============================================================================
+// vNext: Verification Policy
+// ============================================================================
+
+/**
+ * Verification policy configuration.
+ * Controls how verification cones are constructed and cached.
+ */
+export interface VerificationPolicy {
+  /** Default scope hint when candidate doesn't specify one */
+  defaultScope: VerificationScopeHint;
+
+  /** Allow fixes that introduce new errors if net positive */
+  allowRegressions: boolean;
+
+  /** Maximum files to include in a verification cone */
+  maxConeFiles: number;
+
+  /** Maximum errors to consider for cone expansion */
+  maxConeErrors: number;
+
+  /** Cone expansion configuration */
+  coneExpansion: {
+    /** Include files with existing errors in the cone */
+    includeErrors: boolean;
+    /** Include reverse dependencies of modified files */
+    includeReverseDeps: boolean;
+    /** Maximum error files to add when capping cone size */
+    topKErrorFiles: number;
+  };
+
+  /** Cache "before" diagnostics per cone signature */
+  cacheBeforeDiagnostics: boolean;
+
+  /** Cache key strategy: "cone" or "cone+iteration" */
+  cacheKeyStrategy: "cone" | "cone+iteration";
+
+  /** Host invalidation strategy after verification */
+  hostInvalidation: "modified" | "cone" | "full";
+}

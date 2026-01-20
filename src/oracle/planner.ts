@@ -19,8 +19,16 @@ import type {
   RepairRequest,
   BudgetStats,
   FixDependencies,
+  VerificationPolicy,
+  CandidateFix,
 } from "../output/types.js";
 import { createBudgetLogger, createNoopLogger, type BudgetLogger } from "./logger.js";
+import {
+  getFilesModified as getCandidateFilesModified,
+  applyCandidate,
+} from "./candidate.js";
+import { ConeCache, buildCone, getEffectiveScope } from "./cone.js";
+import { selectHostInvalidation } from "./policy.js";
 
 // ============================================================================
 // Scoring Strategy
@@ -341,6 +349,126 @@ function verify(
   };
 }
 
+/**
+ * Verify a candidate fix using cone-based verification.
+ *
+ * This version uses the unified CandidateFix abstraction and supports
+ * cone caching for better performance with structural edits.
+ */
+export function verifyWithCone(
+  host: TypeScriptHost,
+  diagnostic: ts.Diagnostic,
+  candidate: CandidateFix,
+  filesWithErrors: Set<string>,
+  policy: VerificationPolicy,
+  coneCache: ConeCache,
+  reverseDepsLookup?: (files: Set<string>) => Set<string>
+): VerificationResult {
+  const vfs = host.getVFS();
+  const snapshot = vfs.snapshot();
+
+  // Build verification cone
+  const modifiedFiles = getCandidateFilesModified(candidate);
+  const scopeHint = getEffectiveScope(candidate.scopeHint, policy);
+  const cone = buildCone(modifiedFiles, filesWithErrors, scopeHint, policy, reverseDepsLookup);
+
+  // Track files checked
+  verifyTiming.totalFilesChecked += cone.size;
+
+  // Get "before" diagnostics (cached by cone signature)
+  const useIteration = policy.cacheKeyStrategy === "cone+iteration";
+  let diagnosticsBefore = coneCache.get(cone, useIteration);
+  if (!diagnosticsBefore && policy.cacheBeforeDiagnostics) {
+    diagnosticsBefore = host.getDiagnosticsForFiles(cone);
+    coneCache.set(cone, diagnosticsBefore, useIteration);
+  } else if (!diagnosticsBefore) {
+    diagnosticsBefore = host.getDiagnosticsForFiles(cone);
+  }
+
+  const errorsBefore = diagnosticsBefore.length;
+
+  // Pre-compute diagnostic keys for efficient comparison
+  const beforeKeysArray = diagnosticsBefore.map(diagnosticKey);
+  const beforeKeys = new Set(beforeKeysArray);
+
+  // Apply the candidate
+  const t0 = performance.now();
+  applyCandidate(vfs, candidate);
+  // Notify host about modified files
+  host.notifySpecificFilesChanged(modifiedFiles);
+  verifyTiming.applyFix += performance.now() - t0;
+
+  // Re-check the cone
+  const t1 = performance.now();
+  const diagnosticsAfter = host.getDiagnosticsForFiles(cone);
+  verifyTiming.getDiagnostics += performance.now() - t1;
+  const errorsAfter = diagnosticsAfter.length;
+
+  // Compute keys for "after" diagnostics
+  const afterKeysArray = diagnosticsAfter.map(diagnosticKey);
+  const afterKeys = new Set(afterKeysArray);
+
+  // Check if target diagnostic was fixed
+  const targetKey = diagnosticKey(diagnostic);
+  const targetFixed = !afterKeys.has(targetKey);
+
+  // Find new diagnostics introduced
+  const newDiagnostics = diagnosticsAfter.filter(
+    (_, i) => !beforeKeys.has(afterKeysArray[i])
+  );
+
+  // Find resolved diagnostics
+  const resolvedDiagnostics = diagnosticsBefore.filter(
+    (_, i) => !afterKeys.has(beforeKeysArray[i])
+  );
+
+  // Calculate weighted scores
+  const resolvedWeight = resolvedDiagnostics.reduce(
+    (sum, d) => sum + diagnosticWeight(d),
+    0
+  );
+  const introducedWeight = newDiagnostics.reduce(
+    (sum, d) => sum + diagnosticWeight(d),
+    0
+  );
+
+  // Calculate edit size
+  let editSize: number;
+  if (candidate.kind === "tsCodeFix") {
+    editSize = computeEditSize(candidate.action);
+  } else {
+    editSize = candidate.changes.reduce(
+      (sum, c) => sum + (c.end - c.start) + c.newText.length,
+      0
+    );
+  }
+
+  // Restore VFS and invalidate based on policy
+  const t2 = performance.now();
+  vfs.restore(snapshot);
+  const invalidation = selectHostInvalidation(modifiedFiles, cone, policy);
+  if (invalidation === "modified") {
+    host.notifySpecificFilesChanged(modifiedFiles);
+  } else if (invalidation === "cone") {
+    host.notifySpecificFilesChanged(cone);
+  } else {
+    host.notifyFilesChanged();
+  }
+  verifyTiming.restore += performance.now() - t2;
+  verifyTiming.count++;
+
+  return {
+    targetFixed,
+    errorsBefore,
+    errorsAfter,
+    delta: errorsBefore - errorsAfter,
+    newDiagnostics,
+    resolvedWeight,
+    introducedWeight,
+    editSize,
+  };
+}
+
 // ============================================================================
 // Dependency Metadata
 // ============================================================================
@@ -601,6 +729,9 @@ export interface PlanOptions {
 
   /** Budget logger for tracing (optional) */
   logger?: BudgetLogger;
+
+  /** Verification policy for cone construction and caching (vNext) */
+  verificationPolicy?: Partial<VerificationPolicy>;
 }
 
 const DEFAULT_OPTIONS: PlanOptions = {
@@ -1221,3 +1352,25 @@ export function repair(
 
 // Re-export logger for convenience
 export { createBudgetLogger, createNoopLogger, type BudgetLogger };
+
+// Re-export vNext abstractions for convenience
+export {
+  wrapTsCodeFix,
+  getFilesModified as getCandidateFilesModified,
+  applyCandidate,
+  getChanges,
+  normalizeEdits,
+  createSyntheticFix,
+  deduplicateCandidates,
+} from "./candidate.js";
+export { ConeCache, buildCone, getEffectiveScope, getConeStats } from "./cone.js";
+export {
+  DEFAULT_POLICY,
+  STRUCTURAL_POLICY,
+  WIDE_POLICY,
+  mergePolicy,
+  selectHostInvalidation,
+  getPolicyForScope,
+  validatePolicy,
+} from "./policy.js";
+export { createReverseDepsLookup, getApproximateReverseDeps } from "./typescript.js";
