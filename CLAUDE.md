@@ -206,6 +206,14 @@ ts-repair repair ./tsconfig.json --json
 
 # Apply fixes automatically
 ts-repair repair ./tsconfig.json --apply
+
+# Run benchmarks to compare scoring strategies
+ts-repair benchmark
+
+# Benchmark specific fixture or category
+ts-repair benchmark --fixture async-await
+ts-repair benchmark --category synthetic
+ts-repair benchmark --strategy weighted
 ```
 
 ## Development Notes
@@ -254,6 +262,7 @@ Not all verified fixes are equal. Risk categories (low to high):
 |-------|------|-------------|
 | **Architecture** | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design and components |
 | **CLI Reference** | [docs/CLI.md](docs/CLI.md) | Command-line interface reference |
+| **Benchmarking** | [docs/benchmarking/README.md](docs/benchmarking/README.md) | Benchmark harness and corpus |
 | **Product Requirements** | [docs/PRD.md](docs/PRD.md) | Full specification |
 | **Roadmap** | [docs/ROADMAP.md](docs/ROADMAP.md) | Implementation status |
 
