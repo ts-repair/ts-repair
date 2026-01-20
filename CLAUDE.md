@@ -1,5 +1,40 @@
 # ts-repair
 
+## ⚠️ DEVELOPMENT RULES — READ FIRST
+
+### 1. No Stubs or TODOs
+
+**Never stub out features or leave TODO comments.** Every feature must be fully implemented before committing. If a feature is too large, break it into smaller, complete pieces. Partial implementations and placeholder code are not acceptable.
+
+### 2. Always Run Tests Before Committing
+
+Before every commit:
+```bash
+mise run check    # TypeScript type checking must pass
+mise run test     # All tests must pass
+```
+**Never commit code that fails type checking or tests.** Fix any defects before committing.
+
+### 3. Use Git Worktrees for Development
+
+Make changes in git worktrees, not directly on main:
+
+```bash
+# Create a worktree for your feature branch
+git worktree add ../ts-repair-feature-name -b feature-name
+
+# Work in the worktree
+cd ../ts-repair-feature-name
+
+# After branch is merged, clean up
+git worktree remove ../ts-repair-feature-name
+git branch -d feature-name
+```
+
+**After the branch is merged, always clean up the worktree.**
+
+---
+
 ## Project Overview
 
 ts-repair is an **oracle-guided TypeScript repair engine** that turns compiler diagnostics into verified repair plans for agents.
@@ -224,37 +259,6 @@ Same input → same repair plan. No randomness, no heuristics that vary by run.
 ### Clear Classification
 
 Every diagnostic in the output must have a disposition. The agent should never have to guess what to do.
-
-### No Stubs or TODOs
-
-**Never stub out features or leave TODO comments.** Every feature must be fully implemented before committing. If a feature is too large, break it into smaller, complete pieces. Partial implementations and placeholder code are not acceptable.
-
-### Use Git Worktrees for Development
-
-Make changes in git worktrees, not directly on main:
-
-```bash
-# Create a worktree for your feature branch
-git worktree add ../ts-repair-feature-name -b feature-name
-
-# Work in the worktree
-cd ../ts-repair-feature-name
-
-# After branch is merged, clean up
-git worktree remove ../ts-repair-feature-name
-git branch -d feature-name
-```
-
-**After the branch is merged, always clean up the worktree.**
-
-### Always Run Tests and Linting Before Committing
-
-Before every commit:
-1. Run `mise run check` — TypeScript type checking must pass
-2. Run `mise run test` — All tests must pass
-3. Fix any defects before committing
-
-Never commit code that fails type checking or tests.
 
 ## Testing Requirements
 
