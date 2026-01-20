@@ -20,18 +20,31 @@ mise run test     # All tests must pass
 Make changes in git worktrees, not directly on main:
 
 ```bash
-# Create a worktree for your feature branch
+# 1. Create a worktree for your feature branch
 git worktree add ../ts-repair-feature-name -b feature-name
 
-# Work in the worktree
+# 2. Work in the worktree
 cd ../ts-repair-feature-name
 
-# After branch is merged, clean up
+# 3. Implement, commit, and run tests
+mise run check && mise run test
+
+# 4. STOP — Wait for user review before merging
+#    Do NOT merge to main automatically
+
+# 5. After user approves, merge to main (from main worktree)
+cd ../ts-repair
+git merge feature-name
+
+# 6. Clean up worktree and branch
 git worktree remove ../ts-repair-feature-name
 git branch -d feature-name
 ```
 
-**After the branch is merged, always clean up the worktree.**
+**Important workflow:**
+- After implementing a feature, **wait for user review** before merging
+- Only merge to main after the user has reviewed and approved the changes
+- After merging, always clean up the worktree and branch
 
 ---
 
