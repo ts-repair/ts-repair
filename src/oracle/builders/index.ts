@@ -8,9 +8,15 @@
 import { registerBuilder } from "../builder.js";
 import { OverloadRepairBuilder } from "./overload.js";
 import { ModuleExtensionBuilder } from "./module-extension.js";
+import { GenericConstraintBuilder } from "./generic-constraint.js";
+import { ConditionalTypeDistributionBuilder } from "./conditional-distribution.js";
+import { InstantiationDepthBuilder } from "./instantiation-depth.js";
 
 export { OverloadRepairBuilder } from "./overload.js";
 export { ModuleExtensionBuilder } from "./module-extension.js";
+export { GenericConstraintBuilder } from "./generic-constraint.js";
+export { ConditionalTypeDistributionBuilder } from "./conditional-distribution.js";
+export { InstantiationDepthBuilder } from "./instantiation-depth.js";
 
 /**
  * All built-in builders as an array for iteration.
@@ -18,6 +24,9 @@ export { ModuleExtensionBuilder } from "./module-extension.js";
 export const builtinBuilders = [
   OverloadRepairBuilder,
   ModuleExtensionBuilder,
+  GenericConstraintBuilder,
+  ConditionalTypeDistributionBuilder,
+  InstantiationDepthBuilder,
 ] as const;
 
 /**
