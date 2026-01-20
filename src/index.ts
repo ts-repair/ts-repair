@@ -86,3 +86,7 @@ export type {
   BuilderContext,
   BuilderMatchResult,
 } from "./output/types.js";
+
+// vNext: Built-in Builders
+export { OverloadRepairBuilder } from "./oracle/builders/overload.js";
+export { builtinBuilders, registerBuiltinBuilders } from "./oracle/builders/index.js";

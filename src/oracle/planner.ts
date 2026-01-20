@@ -10,6 +10,7 @@ import {
   createTypeScriptHost,
   toDiagnosticRef,
   toFileChanges,
+  createReverseDepsLookup,
   type TypeScriptHost,
 } from "./typescript.js";
 import type {
@@ -36,7 +37,7 @@ import {
   defaultRegistry,
 } from "./builder.js";
 import { ConeCache, buildCone, getEffectiveScope } from "./cone.js";
-import { selectHostInvalidation } from "./policy.js";
+import { selectHostInvalidation, getPolicyForScope } from "./policy.js";
 
 // ============================================================================
 // Scoring Strategy
@@ -840,6 +841,10 @@ export function plan(
   const host = createTypeScriptHost(configPath);
   const logger = opts.logger ?? createNoopLogger();
 
+  // Cone-based verification support for synthetic candidates
+  const coneCache = new ConeCache();
+  const reverseDepsLookup = createReverseDepsLookup(host);
+
   const steps: VerifiedFix[] = [];
   let fixId = 0;
 
@@ -1081,42 +1086,18 @@ export function plan(
         if (candidate.kind === "tsCodeFix") {
           result = verify(host, diagnostic, candidate.action, currentDiagnostics, currentDiagnosticKeys, currentDiagnosticKeysArray);
         } else {
-          // Verify synthetic candidate
-          const vfs = host.getVFS();
-          const snapshot = vfs.snapshot();
-
-          // Apply candidate
-          applyCandidate(vfs, candidate);
-          const modifiedFiles = getCandidateFilesModified(candidate);
-          host.notifySpecificFilesChanged(modifiedFiles);
-
-          // Get diagnostics after
-          const diagnosticsAfter = host.getDiagnosticsForFiles(modifiedFiles);
-
-          // Restore
-          vfs.restore(snapshot);
-          host.notifySpecificFilesChanged(modifiedFiles);
-
-          // Check if target was fixed
-          const targetKey = diagnosticKey(diagnostic);
-          const afterKeys = new Set(diagnosticsAfter.map(diagnosticKey));
-          const targetFixed = !afterKeys.has(targetKey);
-
-          // Find new diagnostics
-          const newDiagnostics = diagnosticsAfter.filter(
-            (d) => !currentDiagnosticKeys.has(diagnosticKey(d))
+          // Verify synthetic candidate using cone-based verification
+          // This properly handles wide-scope fixes that affect dependent files
+          const policy = getPolicyForScope(candidate.scopeHint ?? "modified");
+          result = verifyWithCone(
+            host,
+            diagnostic,
+            candidate,
+            filesWithErrors,
+            policy,
+            coneCache,
+            reverseDepsLookup
           );
-
-          result = {
-            targetFixed,
-            errorsBefore: currentDiagnostics.length,
-            errorsAfter: diagnosticsAfter.length,
-            delta: currentDiagnostics.length - diagnosticsAfter.length,
-            newDiagnostics,
-            resolvedWeight: 0,
-            introducedWeight: 0,
-            editSize: computeCandidateEditSize(candidate),
-          };
         }
         timing.verifications += performance.now() - verifyStart;
         timing.verificationCount++;

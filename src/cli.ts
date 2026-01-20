@@ -20,6 +20,10 @@
 
 import { repair, createBudgetLogger } from "./oracle/planner.js";
 import { previewBudgetImpact, formatPreviewText, formatPreviewJSON } from "./oracle/preview.js";
+import { registerBuiltinBuilders } from "./oracle/builders/index.js";
+
+// Register built-in builders for repair planning
+registerBuiltinBuilders();
 import { formatPlanText, formatPlanJSON, formatPlanCompact } from "./output/format.js";
 import type { RepairPlan, VerifiedFix, FileChange } from "./output/types.js";
 import { createTypeScriptHost } from "./oracle/typescript.js";
