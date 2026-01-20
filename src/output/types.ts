@@ -156,6 +156,9 @@ export interface RepairRequest {
   /** Scoring weights for weighted strategy */
   scoreWeights?: ScoreWeights;
 
+  /** Verification policy for cone-based verification (vNext) */
+  verificationPolicy?: Partial<VerificationPolicy>;
+
   /** Callback for progress updates */
   onProgress?: (message: string) => void;
 }
@@ -218,4 +221,56 @@ export interface BudgetPreview {
     candidateCount: number;
     estimatedCost: number;
   }>;
+}
+
+// ============================================================================
+// Verification Policy (vNext)
+// ============================================================================
+
+/**
+ * Verification scope determines how wide the cone of attention is.
+ *
+ * - "modified": Only files touched by the candidate (fast path, default)
+ * - "errors": Modified files + all files with existing errors
+ * - "wide": Modified + errors + reverse dependencies (structural fixes)
+ */
+export type VerificationScope = "modified" | "errors" | "wide";
+
+/**
+ * Policy controlling verification behavior.
+ *
+ * The policy makes scope and invalidation configurable so structural fixes
+ * can widen scope while keeping fast paths for lexical changes.
+ */
+export interface VerificationPolicy {
+  /** Default scope for candidates without scopeHint */
+  defaultScope: VerificationScope;
+
+  /** Allow candidates that introduce regressions (new errors) */
+  allowRegressions: boolean;
+
+  /** Maximum files in a verification cone (0 = unlimited) */
+  maxConeFiles: number;
+
+  /** Maximum errors to track in a cone (0 = unlimited) */
+  maxConeErrors: number;
+
+  /** Cone expansion settings */
+  coneExpansion: {
+    /** Include files with existing errors in the cone */
+    includeErrors: boolean;
+    /** Include reverse dependencies of modified files (expensive) */
+    includeReverseDeps: boolean;
+    /** Limit error files to top K by error count */
+    topKErrorFiles: number;
+  };
+
+  /** Cache before-diagnostics per cone signature */
+  cacheBeforeDiagnostics: boolean;
+
+  /** Cache key strategy */
+  cacheKeyStrategy: "cone" | "cone+iteration";
+
+  /** Host invalidation strategy after verification */
+  hostInvalidation: "modified" | "cone" | "full";
 }
