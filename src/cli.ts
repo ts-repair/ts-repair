@@ -619,6 +619,7 @@ interface RepairOptions {
   apply: boolean;
   includeHighRisk: boolean;
   trace: boolean;
+  telemetry: boolean;
   maxVerifications?: number;
   maxCandidatesPerIteration?: number;
   scoringStrategy: ScoringStrategy;
@@ -631,6 +632,7 @@ function parseRepairOptions(args: string[]): { options: RepairOptions; project: 
     apply: false,
     includeHighRisk: false,
     trace: false,
+    telemetry: false,
     scoringStrategy: "delta",
   };
 
@@ -650,6 +652,8 @@ function parseRepairOptions(args: string[]): { options: RepairOptions; project: 
       options.includeHighRisk = true;
     } else if (arg === "--trace") {
       options.trace = true;
+    } else if (arg === "--telemetry") {
+      options.telemetry = true;
     } else if (arg === "--max-verifications" && i + 1 < args.length) {
       options.maxVerifications = parseInt(args[++i], 10);
     } else if (arg === "--max-candidates-per-iteration" && i + 1 < args.length) {
@@ -703,6 +707,7 @@ function runRepair(global: GlobalOptions, args: string[]): void {
         maxVerifications: options.maxVerifications,
         maxCandidatesPerIteration: options.maxCandidatesPerIteration,
         scoringStrategy: options.scoringStrategy,
+        enableTelemetry: options.telemetry,
         onProgress: global.verbose ? (msg) => console.error(msg) : undefined,
       },
       logger
@@ -739,6 +744,16 @@ function runRepair(global: GlobalOptions, args: string[]): void {
       console.log(formatPlanCompact(plan));
     } else {
       console.log(formatPlanText(plan));
+    }
+
+    // Output telemetry if enabled
+    if (options.telemetry && plan.telemetry) {
+      console.error("\n[Telemetry]");
+      console.error(`  Verifications: ${plan.telemetry.totalVerifications}`);
+      console.error(`  Total time: ${plan.telemetry.totalTimeMs.toFixed(0)}ms`);
+      console.error(`  Avg cone size: ${plan.telemetry.avgConeSize.toFixed(1)} files`);
+      console.error(`  Cache hit rate: ${(plan.telemetry.cacheHitRate * 100).toFixed(1)}%`);
+      console.error(`  Host resets: ${plan.telemetry.hostResets}`);
     }
 
     const duration = Date.now() - startTime;
@@ -945,6 +960,7 @@ Command: repair
     --apply                         Apply fixes to files
     --include-high-risk             Include high-risk fixes
     --trace                         Output budget event log as JSON
+    --telemetry                     Collect and output verification telemetry
     --max-verifications N           Maximum total verifications (default: 500)
     --max-candidates-per-iteration N  Max candidates per iteration (default: 100)
     --scoring-strategy <s>          Scoring strategy: delta (default) or weighted

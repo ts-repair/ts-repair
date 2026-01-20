@@ -52,6 +52,13 @@ export interface TypeScriptHost {
    * Useful for test isolation when reusing hosts.
    */
   reset(): void;
+
+  /**
+   * Refresh the language service to reclaim memory.
+   * Creates a new language service instance, allowing the old one to be garbage collected.
+   * This is useful during long verification loops to prevent memory growth.
+   */
+  refreshLanguageService(): void;
 }
 
 /**
@@ -113,9 +120,9 @@ export function createTypeScriptHost(configPath: string): TypeScriptHost {
     getDirectories: ts.sys.getDirectories,
   };
 
-  // Create the language service once and reuse it
-  const documentRegistry = ts.createDocumentRegistry();
-  const languageService = ts.createLanguageService(host, documentRegistry);
+  // Create the language service (can be refreshed to reclaim memory)
+  let documentRegistry = ts.createDocumentRegistry();
+  let languageService = ts.createLanguageService(host, documentRegistry);
 
   return {
     getDiagnostics(): ts.Diagnostic[] {
@@ -238,6 +245,13 @@ export function createTypeScriptHost(configPath: string): TypeScriptHost {
       for (const fileName of fileNames) {
         bumpFileVersion(fileName);
       }
+    },
+
+    refreshLanguageService(): void {
+      // Create a fresh language service to allow the old one to be GC'd
+      // This helps reclaim memory during long verification loops
+      documentRegistry = ts.createDocumentRegistry();
+      languageService = ts.createLanguageService(host, documentRegistry);
     },
   };
 }

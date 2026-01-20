@@ -22,8 +22,11 @@ import type {
   FixDependencies,
   VerificationPolicy,
   CandidateFix,
+  MemoryGuardConfig,
 } from "../output/types.js";
 import { createBudgetLogger, createNoopLogger, type BudgetLogger } from "./logger.js";
+import { MemoryGuard, DEFAULT_MEMORY_CONFIG } from "./memory.js";
+import { TelemetryCollector } from "./telemetry.js";
 import {
   getFilesModified as getCandidateFilesModified,
   applyCandidate,
@@ -794,6 +797,12 @@ export interface PlanOptions {
 
   /** Enable builder-generated candidates (vNext, default: true) */
   useBuilders?: boolean;
+
+  /** Enable telemetry collection (default: false) */
+  enableTelemetry?: boolean;
+
+  /** Memory guard configuration (optional) */
+  memoryConfig?: Partial<MemoryGuardConfig>;
 }
 
 const DEFAULT_OPTIONS: PlanOptions = {
@@ -806,6 +815,7 @@ const DEFAULT_OPTIONS: PlanOptions = {
   scoringStrategy: "delta",
   scoreWeights: DEFAULT_SCORE_WEIGHTS,
   useBuilders: true,
+  enableTelemetry: false,
 };
 
 /**
@@ -841,8 +851,15 @@ export function plan(
   const host = createTypeScriptHost(configPath);
   const logger = opts.logger ?? createNoopLogger();
 
+  // Memory guard for periodic host reset
+  const memoryGuard = new MemoryGuard(opts.memoryConfig);
+
+  // Telemetry collector for performance tracking
+  const telemetry = new TelemetryCollector(opts.enableTelemetry ?? false);
+
   // Cone-based verification support for synthetic candidates
-  const coneCache = new ConeCache();
+  // Use max cache size from memory config
+  const coneCache = new ConeCache(opts.memoryConfig?.maxCacheSize ?? DEFAULT_MEMORY_CONFIG.maxCacheSize);
   const reverseDepsLookup = createReverseDepsLookup(host);
 
   const steps: VerifiedFix[] = [];
@@ -1099,9 +1116,22 @@ export function plan(
             reverseDepsLookup
           );
         }
-        timing.verifications += performance.now() - verifyStart;
+        const verifyTimeMs = performance.now() - verifyStart;
+        timing.verifications += verifyTimeMs;
         timing.verificationCount++;
         candidatesVerified++;
+
+        // Record telemetry for this verification
+        // Cone size is 1 for tsCodeFix (only modified files), or cone size for synthetic
+        const coneSize = candidate.kind === "tsCodeFix" ? 1 : filesWithErrors.size;
+        telemetry.recordVerification(coneSize, verifyTimeMs);
+
+        // Check memory guard - reset host if needed
+        if (memoryGuard.tick()) {
+          memoryGuard.resetHost(host);
+          telemetry.recordHostReset();
+          coneCache.clear(); // Clear cache after host reset
+        }
 
         logger.log({
           type: "verification_end",
@@ -1258,6 +1288,9 @@ export function plan(
       const avgVerify = timing.verificationCount > 0 ? timing.verifications / timing.verificationCount : 0;
       opts.onProgress?.(`[timing] Iter ${iteration}: verifications=${timing.verificationCount}, avg=${avgVerify.toFixed(0)}ms, iterDiag=${timing.iterationDiagnostics.toFixed(0)}ms`);
     }
+
+    // Record iteration telemetry
+    telemetry.recordIteration(coneCache.getStats());
   }
 
   // Classify remaining diagnostics
@@ -1313,7 +1346,8 @@ export function plan(
   }
   resetVerifyTiming();
 
-  return {
+  // Build the repair plan with optional telemetry
+  const plan: RepairPlan = {
     steps,
     remaining,
     batches,
@@ -1325,6 +1359,13 @@ export function plan(
       budget: budgetStats,
     },
   };
+
+  // Include telemetry if enabled
+  if (telemetry.isEnabled()) {
+    plan.telemetry = telemetry.getSummary(coneCache.getStats());
+  }
+
+  return plan;
 }
 
 /**
@@ -1591,6 +1632,8 @@ export function repair(
     },
     onProgress: request.onProgress,
     logger,
+    enableTelemetry: request.enableTelemetry,
+    memoryConfig: request.memoryConfig,
   });
 }
 
@@ -1607,7 +1650,7 @@ export {
   createSyntheticFix,
   deduplicateCandidates,
 } from "./candidate.js";
-export { ConeCache, buildCone, getEffectiveScope, getConeStats } from "./cone.js";
+export { ConeCache, buildCone, getEffectiveScope, getConeStats, rankErrorFiles, type FileScore } from "./cone.js";
 export {
   DEFAULT_POLICY,
   STRUCTURAL_POLICY,
@@ -1618,6 +1661,12 @@ export {
   validatePolicy,
 } from "./policy.js";
 export { createReverseDepsLookup, getApproximateReverseDeps } from "./typescript.js";
+
+// Re-export memory guards
+export { MemoryGuard, DEFAULT_MEMORY_CONFIG } from "./memory.js";
+
+// Re-export telemetry
+export { TelemetryCollector } from "./telemetry.js";
 
 // Re-export vNext builder framework
 export {

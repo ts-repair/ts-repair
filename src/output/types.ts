@@ -111,6 +111,9 @@ export interface RepairPlan {
     /** Budget usage statistics */
     budget: BudgetStats;
   };
+
+  /** Verification telemetry (if enabled) */
+  telemetry?: VerificationTelemetry;
 }
 
 // ============================================================================
@@ -158,6 +161,12 @@ export interface RepairRequest {
 
   /** Callback for progress updates */
   onProgress?: (message: string) => void;
+
+  /** Enable telemetry collection (default: false) */
+  enableTelemetry?: boolean;
+
+  /** Memory guard configuration (optional) */
+  memoryConfig?: Partial<MemoryGuardConfig>;
 }
 
 export interface RepairResponse {
@@ -218,6 +227,80 @@ export interface BudgetPreview {
     candidateCount: number;
     estimatedCost: number;
   }>;
+}
+
+// ============================================================================
+// Verification Telemetry
+// ============================================================================
+
+/**
+ * Per-iteration telemetry data.
+ */
+export interface IterationTelemetry {
+  /** Iteration number (1-indexed) */
+  iteration: number;
+  /** Number of candidates verified in this iteration */
+  candidatesVerified: number;
+  /** Time spent in this iteration (ms) */
+  timeMs: number;
+  /** Average cone size across verifications */
+  avgConeSize: number;
+  /** Cache hits in this iteration */
+  cacheHits: number;
+  /** Cache misses in this iteration */
+  cacheMisses: number;
+}
+
+/**
+ * Verification telemetry data collected during repair planning.
+ */
+export interface VerificationTelemetry {
+  /** Total verifications performed */
+  totalVerifications: number;
+  /** Total time spent on verifications (ms) */
+  totalTimeMs: number;
+  /** Average cone size across verifications */
+  avgConeSize: number;
+  /** Cache hit rate (0-1) */
+  cacheHitRate: number;
+  /** Number of host resets performed */
+  hostResets: number;
+  /** Per-iteration stats (optional, for detailed analysis) */
+  iterations?: IterationTelemetry[];
+}
+
+// ============================================================================
+// Memory Guard Configuration
+// ============================================================================
+
+/**
+ * Configuration for memory guards during verification.
+ */
+export interface MemoryGuardConfig {
+  /** Reset host after this many verifications (default: 50) */
+  resetInterval: number;
+  /** Max cache entries before eviction (default: 100) */
+  maxCacheSize: number;
+  /** Log memory stats at reset (default: false) */
+  logStats: boolean;
+}
+
+// ============================================================================
+// Cache Statistics
+// ============================================================================
+
+/**
+ * Cache hit/miss statistics for ConeCache.
+ */
+export interface CacheStats {
+  /** Number of cache hits */
+  hits: number;
+  /** Number of cache misses */
+  misses: number;
+  /** Hit rate (hits / total) */
+  hitRate: number;
+  /** Current number of entries in cache */
+  size: number;
 }
 
 // ============================================================================
