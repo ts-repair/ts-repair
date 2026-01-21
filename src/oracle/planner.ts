@@ -682,20 +682,32 @@ export function deriveDependencies(steps: VerifiedFix[]): string[][] {
   return computeBatches(steps);
 }
 
+/** Pre-computed Set lookups for O(1) conflict/requires checks */
+interface DependencySets {
+  conflictsWithSet: Set<string>;
+  requiresSet: Set<string>;
+}
+
 export function computeBatches(steps: VerifiedFix[]): string[][] {
   const batches: string[][] = [];
   const batchIndexById = new Map<string, number>();
   const stepById = new Map<string, VerifiedFix>();
+  const dependencySets = new Map<string, DependencySets>();
 
+  // Pre-compute Set lookups for O(1) membership checks
   for (const step of steps) {
     stepById.set(step.id, step);
+    dependencySets.set(step.id, {
+      conflictsWithSet: new Set(step.dependencies.conflictsWith),
+      requiresSet: new Set(step.dependencies.requires),
+    });
   }
 
   for (const step of steps) {
     let placed = false;
 
     for (let i = 0; i < batches.length; i++) {
-      if (!canJoinBatch(step, batches[i], i, batchIndexById, stepById)) {
+      if (!canJoinBatch(step, batches[i], i, batchIndexById, stepById, dependencySets)) {
         continue;
       }
 
@@ -719,39 +731,37 @@ function canJoinBatch(
   batch: string[],
   batchIndex: number,
   batchIndexById: Map<string, number>,
-  stepById: Map<string, VerifiedFix>
+  stepById: Map<string, VerifiedFix>,
+  dependencySets: Map<string, DependencySets>
 ): boolean {
-  const requiresIndexes = step.dependencies.requires.map((req) =>
-    batchIndexById.get(req)
-  );
+  const stepSets = dependencySets.get(step.id)!;
 
-  for (const index of requiresIndexes) {
-    if (index === undefined) {
-      return false;
-    }
-    if (index === batchIndex) {
-      return false;
-    }
-    if (index > batchIndex) {
+  for (const req of step.dependencies.requires) {
+    const index = batchIndexById.get(req);
+    if (index === undefined || index === batchIndex || index > batchIndex) {
       return false;
     }
   }
 
   for (const memberId of batch) {
-    if (step.dependencies.conflictsWith.includes(memberId)) {
+    // O(1) check: does step conflict with member?
+    if (stepSets.conflictsWithSet.has(memberId)) {
+      return false;
+    }
+
+    const memberSets = dependencySets.get(memberId);
+    if (!memberSets) {
+      continue;
+    }
+
+    // O(1) check: does member conflict with step?
+    if (memberSets.conflictsWithSet.has(step.id)) {
       return false;
     }
 
     const member = stepById.get(memberId);
-    if (!member) {
-      continue;
-    }
-
-    if (member.dependencies.conflictsWith.includes(step.id)) {
-      return false;
-    }
-
     if (
+      member &&
       member.dependencies.exclusiveGroup &&
       member.dependencies.exclusiveGroup === step.dependencies.exclusiveGroup
     ) {
