@@ -20,11 +20,23 @@
 
 import { repair, createBudgetLogger } from "./oracle/planner.js";
 import { previewBudgetImpact, formatPreviewText, formatPreviewJSON } from "./oracle/preview.js";
+import { registerBuiltinBuilders } from "./oracle/builders/index.js";
+
+// Register built-in builders for repair planning
+registerBuiltinBuilders();
 import { formatPlanText, formatPlanJSON, formatPlanCompact } from "./output/format.js";
 import type { RepairPlan, VerifiedFix, FileChange } from "./output/types.js";
 import { createTypeScriptHost } from "./oracle/typescript.js";
 import { runMcpServer } from "./mcp/server.js";
 import type { ScoringStrategy } from "./oracle/planner.js";
+import { runBenchmark as runBenchmarkHarness, type HarnessOptions } from "./benchmark/harness.js";
+import {
+  formatAsJson as formatBenchmarkJson,
+  formatAsCsv as formatBenchmarkCsv,
+  formatAsText as formatBenchmarkText,
+  writeAllReports,
+} from "./benchmark/reporter.js";
+import { getCorpusStats, loadCorpus } from "./benchmark/corpus.js";
 import ts from "typescript";
 import fs from "fs";
 import path from "path";
@@ -615,6 +627,7 @@ interface RepairOptions {
   apply: boolean;
   includeHighRisk: boolean;
   trace: boolean;
+  telemetry: boolean;
   maxVerifications?: number;
   maxCandidatesPerIteration?: number;
   scoringStrategy: ScoringStrategy;
@@ -627,6 +640,7 @@ function parseRepairOptions(args: string[]): { options: RepairOptions; project: 
     apply: false,
     includeHighRisk: false,
     trace: false,
+    telemetry: false,
     scoringStrategy: "delta",
   };
 
@@ -646,6 +660,8 @@ function parseRepairOptions(args: string[]): { options: RepairOptions; project: 
       options.includeHighRisk = true;
     } else if (arg === "--trace") {
       options.trace = true;
+    } else if (arg === "--telemetry") {
+      options.telemetry = true;
     } else if (arg === "--max-verifications" && i + 1 < args.length) {
       options.maxVerifications = parseInt(args[++i], 10);
     } else if (arg === "--max-candidates-per-iteration" && i + 1 < args.length) {
@@ -699,6 +715,7 @@ function runRepair(global: GlobalOptions, args: string[]): void {
         maxVerifications: options.maxVerifications,
         maxCandidatesPerIteration: options.maxCandidatesPerIteration,
         scoringStrategy: options.scoringStrategy,
+        enableTelemetry: options.telemetry,
         onProgress: global.verbose ? (msg) => console.error(msg) : undefined,
       },
       logger
@@ -735,6 +752,16 @@ function runRepair(global: GlobalOptions, args: string[]): void {
       console.log(formatPlanCompact(plan));
     } else {
       console.log(formatPlanText(plan));
+    }
+
+    // Output telemetry if enabled
+    if (options.telemetry && plan.telemetry) {
+      console.error("\n[Telemetry]");
+      console.error(`  Verifications: ${plan.telemetry.totalVerifications}`);
+      console.error(`  Total time: ${plan.telemetry.totalTimeMs.toFixed(0)}ms`);
+      console.error(`  Avg cone size: ${plan.telemetry.avgConeSize.toFixed(1)} files`);
+      console.error(`  Cache hit rate: ${(plan.telemetry.cacheHitRate * 100).toFixed(1)}%`);
+      console.error(`  Host resets: ${plan.telemetry.hostResets}`);
     }
 
     const duration = Date.now() - startTime;
@@ -816,6 +843,234 @@ function runPreview(global: GlobalOptions, args: string[]): void {
 }
 
 // ============================================================================
+// benchmark Command
+// ============================================================================
+
+interface BenchmarkOptions {
+  corpus: string;
+  strategy: "delta" | "weighted" | "both";
+  category?: "synthetic" | "builder-specific" | "real-world";
+  builder?: string;
+  fixture?: string;
+  iterations: number;
+  includeHighRisk: boolean;
+  format: "text" | "json" | "csv";
+  output?: string;
+  outputDir?: string;
+  verbose: boolean;
+}
+
+function parseBenchmarkOptions(args: string[]): BenchmarkOptions {
+  const options: BenchmarkOptions = {
+    corpus: "tests/benchmark/corpus.json",
+    strategy: "both",
+    iterations: 1,
+    includeHighRisk: false,
+    format: "text",
+    verbose: false,
+  };
+
+  let i = 0;
+  while (i < args.length) {
+    const arg = args[i];
+
+    if (arg === "--corpus" && i + 1 < args.length) {
+      options.corpus = args[++i];
+    } else if (arg.startsWith("--corpus=")) {
+      options.corpus = arg.slice("--corpus=".length);
+    } else if (arg === "--strategy" && i + 1 < args.length) {
+      const strategy = args[++i];
+      if (strategy !== "delta" && strategy !== "weighted" && strategy !== "both") {
+        console.error(`Error: --strategy must be 'delta', 'weighted', or 'both', got '${strategy}'`);
+        process.exit(EXIT_ERROR);
+      }
+      options.strategy = strategy;
+    } else if (arg.startsWith("--strategy=")) {
+      const strategy = arg.slice("--strategy=".length);
+      if (strategy !== "delta" && strategy !== "weighted" && strategy !== "both") {
+        console.error(`Error: --strategy must be 'delta', 'weighted', or 'both', got '${strategy}'`);
+        process.exit(EXIT_ERROR);
+      }
+      options.strategy = strategy as "delta" | "weighted" | "both";
+    } else if (arg === "--category" && i + 1 < args.length) {
+      const category = args[++i];
+      if (category !== "synthetic" && category !== "builder-specific" && category !== "real-world") {
+        console.error(
+          `Error: --category must be 'synthetic', 'builder-specific', or 'real-world', got '${category}'`
+        );
+        process.exit(EXIT_ERROR);
+      }
+      options.category = category;
+    } else if (arg.startsWith("--category=")) {
+      const category = arg.slice("--category=".length);
+      if (category !== "synthetic" && category !== "builder-specific" && category !== "real-world") {
+        console.error(
+          `Error: --category must be 'synthetic', 'builder-specific', or 'real-world', got '${category}'`
+        );
+        process.exit(EXIT_ERROR);
+      }
+      options.category = category as "synthetic" | "builder-specific" | "real-world";
+    } else if (arg === "--builder" && i + 1 < args.length) {
+      options.builder = args[++i];
+    } else if (arg.startsWith("--builder=")) {
+      options.builder = arg.slice("--builder=".length);
+    } else if (arg === "--fixture" && i + 1 < args.length) {
+      options.fixture = args[++i];
+    } else if (arg.startsWith("--fixture=")) {
+      options.fixture = arg.slice("--fixture=".length);
+    } else if (arg === "--iterations" && i + 1 < args.length) {
+      const iterations = parseInt(args[++i], 10);
+      if (isNaN(iterations) || iterations < 1) {
+        console.error(`Error: --iterations must be a positive integer, got '${args[i]}'`);
+        process.exit(EXIT_ERROR);
+      }
+      options.iterations = iterations;
+    } else if (arg.startsWith("--iterations=")) {
+      const iterations = parseInt(arg.slice("--iterations=".length), 10);
+      if (isNaN(iterations) || iterations < 1) {
+        console.error(
+          `Error: --iterations must be a positive integer, got '${arg.slice("--iterations=".length)}'`
+        );
+        process.exit(EXIT_ERROR);
+      }
+      options.iterations = iterations;
+    } else if (arg === "--include-high-risk") {
+      options.includeHighRisk = true;
+    } else if (arg === "--format" && i + 1 < args.length) {
+      const format = args[++i];
+      if (format !== "text" && format !== "json" && format !== "csv") {
+        console.error(`Error: --format must be 'text', 'json', or 'csv', got '${format}'`);
+        process.exit(EXIT_ERROR);
+      }
+      options.format = format;
+    } else if (arg.startsWith("--format=")) {
+      const format = arg.slice("--format=".length);
+      if (format !== "text" && format !== "json" && format !== "csv") {
+        console.error(`Error: --format must be 'text', 'json', or 'csv', got '${format}'`);
+        process.exit(EXIT_ERROR);
+      }
+      options.format = format as "text" | "json" | "csv";
+    } else if (arg === "--output" && i + 1 < args.length) {
+      options.output = args[++i];
+    } else if (arg.startsWith("--output=")) {
+      options.output = arg.slice("--output=".length);
+    } else if (arg === "--output-dir" && i + 1 < args.length) {
+      options.outputDir = args[++i];
+    } else if (arg.startsWith("--output-dir=")) {
+      options.outputDir = arg.slice("--output-dir=".length);
+    } else if (arg === "--verbose") {
+      options.verbose = true;
+    }
+
+    i++;
+  }
+
+  return options;
+}
+
+function runBenchmarkCommand(_global: GlobalOptions, args: string[]): void {
+  const options = parseBenchmarkOptions(args);
+
+  // Check if corpus file exists
+  if (!fs.existsSync(options.corpus)) {
+    console.error(`Error: Corpus file not found: ${options.corpus}`);
+    process.exit(EXIT_ERROR);
+  }
+
+  // Build harness options
+  const harnessOptions: HarnessOptions = {
+    corpusPath: options.corpus,
+    strategies:
+      options.strategy === "both" ? ["delta", "weighted"] : [options.strategy],
+    includeHighRisk: options.includeHighRisk,
+    iterations: options.iterations,
+    onProgress: options.verbose ? (msg) => console.error(msg) : undefined,
+  };
+
+  // Build filter from options
+  const filter: HarnessOptions["filter"] = {};
+  if (options.category) {
+    filter.categories = [options.category];
+  }
+  if (options.builder) {
+    filter.builders = [options.builder];
+  }
+  if (options.fixture) {
+    filter.names = [options.fixture];
+  }
+  if (Object.keys(filter).length > 0) {
+    harnessOptions.filter = filter;
+  }
+
+  // Show corpus stats if verbose
+  if (options.verbose) {
+    try {
+      const corpus = loadCorpus(options.corpus);
+      const stats = getCorpusStats(corpus);
+      console.error(`\nCorpus Statistics:`);
+      console.error(`  Total fixtures: ${stats.total}`);
+      console.error(`  Total initial errors: ${stats.totalInitialErrors}`);
+      console.error(`  Categories: ${Object.keys(stats.byCategory).join(", ")}`);
+      console.error(`  Builders: ${Object.keys(stats.byBuilder).join(", ")}`);
+      console.error("");
+    } catch (e) {
+      // Non-fatal - continue with benchmark
+      console.error(`Warning: Could not load corpus stats: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  try {
+    // Run the benchmark
+    const results = runBenchmarkHarness(harnessOptions);
+
+    // Format and output results
+    let output: string;
+    switch (options.format) {
+      case "json":
+        output = formatBenchmarkJson(results);
+        break;
+      case "csv":
+        output = formatBenchmarkCsv(results);
+        break;
+      case "text":
+      default:
+        output = formatBenchmarkText(results);
+        break;
+    }
+
+    // Write output to file or stdout
+    if (options.output) {
+      fs.writeFileSync(options.output, output, "utf-8");
+      if (options.verbose) {
+        console.error(`\nResults written to ${options.output}`);
+      }
+    } else if (!options.outputDir) {
+      console.log(output);
+    }
+
+    // Write all formats to output directory if specified
+    if (options.outputDir) {
+      // Create directory if it doesn't exist
+      if (!fs.existsSync(options.outputDir)) {
+        fs.mkdirSync(options.outputDir, { recursive: true });
+      }
+      writeAllReports(results, options.outputDir);
+      if (options.verbose) {
+        console.error(`\nAll reports written to ${options.outputDir}/`);
+        console.error(`  - benchmark-results.json`);
+        console.error(`  - benchmark-results.csv`);
+        console.error(`  - benchmark-results.txt`);
+      }
+    }
+
+    process.exit(EXIT_SUCCESS);
+  } catch (e) {
+    console.error(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(EXIT_ERROR);
+  }
+}
+
+// ============================================================================
 // mcp-server Command
 // ============================================================================
 
@@ -882,6 +1137,7 @@ Commands:
   explain --id <id>                      Explain a repair candidate
   repair                                 Generate plan with optional apply (new)
   preview                                Preview budget impact (new)
+  benchmark                              Run benchmark harness
   mcp-server                             Run MCP server for agent integration
   help                                   Show this help message
   version                                Show version information
@@ -941,6 +1197,7 @@ Command: repair
     --apply                         Apply fixes to files
     --include-high-risk             Include high-risk fixes
     --trace                         Output budget event log as JSON
+    --telemetry                     Collect and output verification telemetry
     --max-verifications N           Maximum total verifications (default: 500)
     --max-candidates-per-iteration N  Max candidates per iteration (default: 100)
     --scoring-strategy <s>          Scoring strategy: delta (default) or weighted
@@ -951,6 +1208,25 @@ Command: preview
   Options:
     --json                     Output as JSON
     --include-high-risk        Include high-risk candidates in estimate
+
+Command: benchmark
+  ts-repair benchmark                    # Run full benchmark
+  ts-repair benchmark --strategy weighted --category builder-specific
+  ts-repair benchmark --fixture overload-mismatch --format json
+  ts-repair benchmark --verbose --output-dir ./benchmark-results
+
+  Options:
+    --corpus <path>       Path to corpus manifest (default: tests/benchmark/corpus.json)
+    --strategy <name>     Run only this strategy: delta, weighted, or both [default: both]
+    --category <name>     Filter to category: synthetic, builder-specific, or real-world
+    --builder <name>      Filter to fixtures for this builder
+    --fixture <name>      Run only this specific fixture
+    --iterations <n>      Number of iterations per fixture [default: 1]
+    --include-high-risk   Include high-risk fixes
+    --format <fmt>        Output format: text, json, or csv [default: text]
+    --output <path>       Write output to file instead of stdout
+    --output-dir <dir>    Write all formats to directory
+    --verbose             Show progress during benchmark
 
 Command: mcp-server
   ts-repair mcp-server                   # Start MCP server for agent integration
@@ -1028,6 +1304,9 @@ function main(): void {
       break;
     case "preview":
       runPreview(global, remaining);
+      break;
+    case "benchmark":
+      runBenchmarkCommand(global, remaining);
       break;
     case "mcp-server":
       runMcpServerCommand();

@@ -52,6 +52,13 @@ export interface TypeScriptHost {
    * Useful for test isolation when reusing hosts.
    */
   reset(): void;
+
+  /**
+   * Refresh the language service to reclaim memory.
+   * Creates a new language service instance, allowing the old one to be garbage collected.
+   * This is useful during long verification loops to prevent memory growth.
+   */
+  refreshLanguageService(): void;
 }
 
 /**
@@ -113,9 +120,9 @@ export function createTypeScriptHost(configPath: string): TypeScriptHost {
     getDirectories: ts.sys.getDirectories,
   };
 
-  // Create the language service once and reuse it
-  const documentRegistry = ts.createDocumentRegistry();
-  const languageService = ts.createLanguageService(host, documentRegistry);
+  // Create the language service (can be refreshed to reclaim memory)
+  let documentRegistry = ts.createDocumentRegistry();
+  let languageService = ts.createLanguageService(host, documentRegistry);
 
   return {
     getDiagnostics(): ts.Diagnostic[] {
@@ -239,6 +246,13 @@ export function createTypeScriptHost(configPath: string): TypeScriptHost {
         bumpFileVersion(fileName);
       }
     },
+
+    refreshLanguageService(): void {
+      // Create a fresh language service to allow the old one to be GC'd
+      // This helps reclaim memory during long verification loops
+      documentRegistry = ts.createDocumentRegistry();
+      languageService = ts.createLanguageService(host, documentRegistry);
+    },
   };
 }
 
@@ -290,4 +304,72 @@ export function toFileChanges(fix: ts.CodeFixAction): FileChange[] {
   }
 
   return changes;
+}
+
+/**
+ * Get an approximate set of reverse dependencies for a set of files.
+ *
+ * This is a conservative heuristic: it finds files that likely import
+ * any of the modified files by checking if they contain the base name.
+ *
+ * This is an approximation because:
+ * - It doesn't parse actual import statements
+ * - It may include false positives (files that mention the name but don't import)
+ * - It won't catch dynamic imports or require() calls with variables
+ *
+ * For more accurate results, consider using TypeScript's dependency graph.
+ */
+export function getApproximateReverseDeps(
+  host: TypeScriptHost,
+  files: Set<string>
+): Set<string> {
+  const result = new Set<string>();
+  const allFiles = host.getFileNames();
+  const vfs = host.getVFS();
+
+  // Build a set of base names to search for (without extension)
+  const baseNames = new Set<string>();
+  for (const modifiedFile of files) {
+    const baseName = path.basename(modifiedFile, path.extname(modifiedFile));
+    baseNames.add(baseName);
+  }
+
+  for (const fileName of allFiles) {
+    // Skip files that are themselves modified
+    if (files.has(fileName)) continue;
+
+    const content = vfs.read(fileName);
+    if (!content) continue;
+
+    // Check if file imports any modified file
+    // Look for import statements or require calls containing the base name
+    for (const baseName of baseNames) {
+      // Match patterns like:
+      // - import ... from './baseName'
+      // - import ... from '../path/baseName'
+      // - require('./baseName')
+      // - require('../path/baseName')
+      if (
+        content.includes(`'${baseName}'`) ||
+        content.includes(`"${baseName}"`) ||
+        content.includes(`/${baseName}'`) ||
+        content.includes(`/${baseName}"`)
+      ) {
+        result.add(fileName);
+        break;
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Create a reverse dependency lookup function bound to a specific host.
+ * This is useful for passing to buildCone().
+ */
+export function createReverseDepsLookup(
+  host: TypeScriptHost
+): (files: Set<string>) => Set<string> {
+  return (files) => getApproximateReverseDeps(host, files);
 }

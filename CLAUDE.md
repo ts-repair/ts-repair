@@ -1,5 +1,55 @@
 # ts-repair
 
+## ⚠️ DEVELOPMENT RULES — READ FIRST
+
+### 1. No Stubs or TODOs
+
+**Never stub out features or leave TODO comments.** Every feature must be fully implemented before committing. If a feature is too large, break it into smaller, complete pieces. Partial implementations and placeholder code are not acceptable.
+
+### 2. Always Run Tests Before Committing
+
+Before every commit:
+```bash
+mise run check    # TypeScript type checking must pass
+mise run test     # All tests must pass
+```
+**Never commit code that fails type checking or tests.** Fix any defects before committing.
+
+### 3. Use Git Worktrees for Development
+
+Make changes in git worktrees, not directly on main:
+
+```bash
+# 1. Create a worktree for your feature branch
+git worktree add ../ts-repair-feature-name -b feature-name
+
+# 2. Work in the worktree
+cd ../ts-repair-feature-name
+
+# 3. Implement, commit, and run tests
+mise run check && mise run test
+
+# 4. STOP — Wait for user review before merging
+#    Do NOT merge to main automatically
+
+# 5. After user approves, squash merge to main (from main worktree)
+cd ../ts-repair
+git merge --squash feature-name
+git commit
+
+# 6. Clean up worktree and branch
+git worktree remove ../ts-repair-feature-name
+git branch -d feature-name
+```
+
+**Important workflow:**
+- After implementing a feature, **wait for user review** before merging
+- Only merge to main after the user has reviewed and approved the changes
+- Always use **squash merge** (`git merge --squash`) to keep main history clean
+- After merging, always clean up the worktree and branch
+
+---
+
 ## Project Overview
 
 ts-repair is an **oracle-guided TypeScript repair engine** that turns compiler diagnostics into verified repair plans for agents.
@@ -156,6 +206,14 @@ ts-repair repair ./tsconfig.json --json
 
 # Apply fixes automatically
 ts-repair repair ./tsconfig.json --apply
+
+# Run benchmarks to compare scoring strategies
+ts-repair benchmark
+
+# Benchmark specific fixture or category
+ts-repair benchmark --fixture async-await
+ts-repair benchmark --category synthetic
+ts-repair benchmark --strategy weighted
 ```
 
 ## Development Notes
@@ -204,6 +262,7 @@ Not all verified fixes are equal. Risk categories (low to high):
 |-------|------|-------------|
 | **Architecture** | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design and components |
 | **CLI Reference** | [docs/CLI.md](docs/CLI.md) | Command-line interface reference |
+| **Benchmarking** | [docs/benchmarking/README.md](docs/benchmarking/README.md) | Benchmark harness and corpus |
 | **Product Requirements** | [docs/PRD.md](docs/PRD.md) | Full specification |
 | **Roadmap** | [docs/ROADMAP.md](docs/ROADMAP.md) | Implementation status |
 
@@ -224,37 +283,6 @@ Same input → same repair plan. No randomness, no heuristics that vary by run.
 ### Clear Classification
 
 Every diagnostic in the output must have a disposition. The agent should never have to guess what to do.
-
-### No Stubs or TODOs
-
-**Never stub out features or leave TODO comments.** Every feature must be fully implemented before committing. If a feature is too large, break it into smaller, complete pieces. Partial implementations and placeholder code are not acceptable.
-
-### Use Git Worktrees for Development
-
-Make changes in git worktrees, not directly on main:
-
-```bash
-# Create a worktree for your feature branch
-git worktree add ../ts-repair-feature-name -b feature-name
-
-# Work in the worktree
-cd ../ts-repair-feature-name
-
-# After branch is merged, clean up
-git worktree remove ../ts-repair-feature-name
-git branch -d feature-name
-```
-
-**After the branch is merged, always clean up the worktree.**
-
-### Always Run Tests and Linting Before Committing
-
-Before every commit:
-1. Run `mise run check` — TypeScript type checking must pass
-2. Run `mise run test` — All tests must pass
-3. Fix any defects before committing
-
-Never commit code that fails type checking or tests.
 
 ## Testing Requirements
 

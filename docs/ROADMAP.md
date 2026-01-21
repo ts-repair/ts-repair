@@ -9,6 +9,128 @@
 
 This roadmap tracks the implementation of ts-repair as an **oracle-guided TypeScript repair engine**. The system uses the TypeScript compiler as a verification oracle to produce verified, ranked repair plans for agents.
 
+**Priority note:** The vNext roadmap items below are higher priority than the long-term phases that follow. See `docs/VNEXT-REPAIR-FRAMEWORK.md` for the design context and constraints.
+
+---
+
+## vNext: Repair Framework (Higher Priority)
+
+### Phase 0: Foundations ✅ Complete
+
+Unified candidate abstraction and verification infrastructure.
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| `CandidateFix` type | ✅ Done | Union type for tsCodeFix + synthetic candidates |
+| `wrapTsCodeFix()` helper | ✅ Done | Wrap TS CodeFixAction as CandidateFix |
+| `createSyntheticFix()` helper | ✅ Done | Create synthetic candidates with metadata |
+| `getFilesModified()` | ✅ Done | Extract modified files from any candidate |
+| `getChanges()` | ✅ Done | Extract FileChange[] from any candidate |
+| `applyCandidate()` | ✅ Done | Apply candidate to VFS with normalization |
+| `normalizeEdits()` | ✅ Done | Sort and dedupe edits for safe application |
+| `computeCandidateEditSize()` | ✅ Done | Calculate edit size for scoring |
+| `getCandidateKey()` | ✅ Done | Generate unique key for deduplication |
+| `deduplicateCandidates()` | ✅ Done | Remove duplicate candidates across sources |
+| `VerificationScopeHint` type | ✅ Done | Scope hints: modified, errors, wide |
+| `VerificationPolicy` type | ✅ Done | Policy for cone construction and caching |
+| `buildCone()` | ✅ Done | Build verification cone from modified files |
+| `ConeCache` | ✅ Done | Cache diagnostics by cone signature |
+| `verifyWithCone()` | ✅ Done | Unified verification using cone-based approach |
+| Policy presets | ✅ Done | DEFAULT_POLICY, STRUCTURAL_POLICY, WIDE_POLICY |
+| `mergePolicy()` | ✅ Done | Merge partial policy with defaults |
+| Reverse deps lookup | ✅ Done | `getApproximateReverseDeps()` for cone expansion |
+
+**Location:** `src/oracle/candidate.ts`, `src/oracle/cone.ts`, `src/oracle/policy.ts`, `src/output/types.ts`
+
+**Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
+
+### Phase 1: Builder Framework + Routing ✅ Complete
+
+Pluggable builder framework for synthetic repair candidates.
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| `SolutionBuilder` interface | ✅ Done | name, description, diagnosticCodes, messagePatterns, matches(), generate() |
+| `BuilderContext` interface | ✅ Done | diagnostic, host, filesWithErrors, AST access |
+| `BuilderMatchResult` type | ✅ Done | For debugging/logging match results |
+| `BuilderRegistry` class | ✅ Done | Register, index, and query builders |
+| `register()` | ✅ Done | Add builder with code/pattern indexing |
+| `getCandidateBuilders()` | ✅ Done | O(1) lookup by diagnostic code |
+| `getMatchingBuilders()` | ✅ Done | Filter by matches() result |
+| `generateCandidates()` | ✅ Done | Collect candidates from all matching builders |
+| `createBuilderContext()` | ✅ Done | Factory with lazy AST loading |
+| `findNodeAtPosition()` | ✅ Done | Helper for AST node lookup |
+| `defaultRegistry` singleton | ✅ Done | Global registry for convenience |
+| `registerBuilder()` helper | ✅ Done | Register to default registry |
+| Planner integration | ✅ Done | `getAllCandidates()` merges TS + builder candidates |
+| `pruneCandidatesUnified()` | ✅ Done | Prune CandidateFix[] by risk/size |
+| `assessRisk()` with riskHint | ✅ Done | Use builder hint or assess from fixName |
+| Classification integration | ✅ Done | `classifySingleDiagnostic()` includes builders |
+| `useBuilders` option | ✅ Done | Enable/disable builder candidates (default: true) |
+| `builderRegistry` option | ✅ Done | Custom registry support |
+| Builder tests | ✅ Done | Comprehensive unit tests for registry and context |
+
+**Location:** `src/oracle/builder.ts`, `src/oracle/planner.ts`, `tests/oracle/builder.test.ts`
+
+**Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
+
+### Phase 2: Overload Repair Builder ✅ Complete
+
+First concrete builder implementation targeting overload mismatch errors.
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Overload mismatch detection | ✅ Done | Detect TS2769 at call expressions |
+| Definition lookup | ✅ Done | Find overload signatures across project files |
+| Add overload template | ✅ Done | Generate compatible overload signature from impl params |
+| Duplicate detection | ✅ Done | Prevent infinite loops by checking existing overloads |
+| `scopeHint: "wide"` | ✅ Done | Triggers cone-based verification with reverse deps |
+| `riskHint: "high"` | ✅ Done | Requires `--include-high-risk` flag |
+| Overload fixtures | ✅ Done | `tests/fixtures/overload-mismatch/` |
+| Builder tests | ✅ Done | `tests/oracle/builders/overload.test.ts` |
+| CLI integration | ✅ Done | `registerBuiltinBuilders()` in cli.ts |
+| Cone-based verification | ✅ Done | `verifyWithCone()` for synthetic candidates |
+
+**Location:** `src/oracle/builders/overload.ts`, `src/oracle/builders/index.ts`
+
+**Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
+
+### Phase 3: Cone Refinement + Guardrails ✅ Complete
+
+Robust verification for structural edits at scale.
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| `rankErrorFiles()` | ✅ Done | Score error files by relationship to modified files |
+| Top-K error file expansion | ✅ Done | Cap cone size with ranked selection |
+| `ConeCache` LRU eviction | ✅ Done | Bounded cache with hit/miss tracking |
+| `MemoryGuard` class | ✅ Done | Periodic host reset to prevent memory growth |
+| `refreshLanguageService()` | ✅ Done | Enable memory reclamation in TypeScriptHost |
+| `TelemetryCollector` class | ✅ Done | Track verifications, timing, cone sizes, cache stats |
+| `--telemetry` CLI flag | ✅ Done | Output verification performance stats |
+| `enableTelemetry` option | ✅ Done | Enable telemetry in RepairRequest |
+| `memoryConfig` option | ✅ Done | Configure memory guard in RepairRequest |
+| Memory/telemetry tests | ✅ Done | Unit tests + stress tests |
+
+**Location:** `src/oracle/cone.ts`, `src/oracle/memory.ts`, `src/oracle/telemetry.ts`, `src/oracle/planner.ts`
+
+**Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
+
+### Phase 4: Additional Builders (Benchmark-Driven) ✅ Complete
+
+Additional builders based on benchmark-identified gaps.
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Module extension repair | ✅ Done | TS2835: Add `.js` extensions to ESM imports |
+| Generic constraint repair | ✅ Done | TS2344: Add missing members to satisfy constraints |
+| Conditional type distribution | ✅ Done | TS2322/2345/2536: Tuple-wrap to disable distribution |
+| Instantiation depth | ✅ Done | TS2589: Intersection reset pattern for deep recursion |
+
+**Location:** `src/oracle/builders/`, see `docs/ERROR-CODE-MAPPING.md` for full mapping
+
+**Design context:** `docs/VNEXT-REPAIR-FRAMEWORK.md`
+
 ---
 
 ## Implementation Phases
@@ -388,6 +510,18 @@ ts-repair/
 
 ## Timeline
 
+### vNext Phases (Higher Priority)
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| vNext Phase 0 | ✅ Done | Foundations (CandidateFix, cones, policy) |
+| vNext Phase 1 | ✅ Done | Builder framework + routing |
+| vNext Phase 2 | ✅ Done | Overload repair builder |
+| vNext Phase 3 | ✅ Done | Cone refinement + guardrails |
+| vNext Phase 4 | ✅ Done | Additional builders (4 total: Module, Constraint, Distribution, Depth) |
+
+### Core Phases
+
 | Phase | Status | Notes |
 |-------|--------|-------|
 | Phase 1 | ✅ Done | Prototype working |
@@ -449,18 +583,22 @@ TypeScript's code fix suggestions sometimes prefer re-export paths (e.g., `impor
 
 | Component | Status | Priority | Notes |
 |-----------|--------|----------|-------|
-| Benchmark harness | 📋 Planned | Medium | Compare delta vs weighted on real projects |
-| Metrics collection | 📋 Planned | Medium | Fix quality, false positives, performance |
+| Benchmark harness | ✅ Done | Medium | `ts-repair benchmark` command with strategy comparison |
+| Metrics collection | ✅ Done | Medium | RunMetrics, BuilderMetrics, StrategyMetrics, TimingMetrics |
+| Benchmark corpus | ✅ Done | Medium | 13 fixtures: 8 synthetic, 5 builder-specific |
+| Reporter output | ✅ Done | Medium | JSON, CSV, and text formats |
 | Default selection | 📋 Planned | Low | Choose default based on benchmark results |
 | Document non-default | 📋 Planned | Low | Document when to use the other strategy |
 
+**Implementation:** See [docs/benchmarking/README.md](benchmarking/README.md) for complete documentation.
+
 **Goal:** Determine which scoring strategy (delta or weighted) should be the default, and document use cases for the other.
 
-**Metrics to measure:**
-- Fix quality (do selected fixes resolve issues without side effects?)
-- False positive rate (how often are bad fixes selected?)
-- Performance (verification count, time to plan)
-- Edge case handling (large projects, many candidates)
+**Metrics collected:**
+- Fix quality: `errorReduction`, `candidatesVerified`, `regressionCount`
+- False positive rate: `regressionCount / candidatesVerified`
+- Performance: `totalMs`, `avgVerificationMs`
+- Builder effectiveness: `matches`, `successRate`, `falsePositiveRate`
 
 ---
 
@@ -473,5 +611,5 @@ TypeScript's code fix suggestions sometimes prefer re-export paths (e.g., `impor
 
 ---
 
-*Last updated: January 18, 2026*
-*Phases 1-4, 2.5-2.7, 6 complete. Next: Phase 5 (Solver) or Phase 7 (Protocol Specification).*
+*Last updated: January 20, 2026*
+*Phases 1-4, 2.5-2.7, 6 complete. vNext Phases 0-4 complete. Benchmark harness complete.*
