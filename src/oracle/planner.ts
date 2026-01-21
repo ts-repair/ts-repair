@@ -897,6 +897,9 @@ export function plan(
   // OPTIMIZATION: Cache getCodeFixes() results to avoid repeated calls
   // Key: "fileName|start|code", Value: readonly ts.CodeFixAction[]
   const codeFixesCache = new Map<string, readonly ts.CodeFixAction[]>();
+  // OPTIMIZATION: Reverse index for O(1) cache invalidation by filename
+  // Maps filename -> Set of cache keys that reference that file
+  const cacheKeysByFile = new Map<string, Set<string>>();
 
   // OPTIMIZATION: Cache verification results to avoid O(N^2) behavior
   // Key: diagnosticKey + fixName + fixDescription
@@ -931,21 +934,32 @@ export function plan(
 
   function getCachedCodeFixes(diagnostic: ts.Diagnostic): readonly ts.CodeFixAction[] {
     if (!diagnostic.file) return [];
-    const key = `${diagnostic.file.fileName}|${diagnostic.start}|${diagnostic.code}`;
+    const fileName = diagnostic.file.fileName;
+    const key = `${fileName}|${diagnostic.start}|${diagnostic.code}`;
 
     let fixes = codeFixesCache.get(key);
     if (fixes === undefined) {
       fixes = host.getCodeFixes(diagnostic);
       codeFixesCache.set(key, fixes);
+      // Maintain reverse index
+      let keysForFile = cacheKeysByFile.get(fileName);
+      if (!keysForFile) {
+        keysForFile = new Set();
+        cacheKeysByFile.set(fileName, keysForFile);
+      }
+      keysForFile.add(key);
     }
     return fixes;
   }
 
   function invalidateCacheForFiles(files: Set<string>): void {
-    for (const key of codeFixesCache.keys()) {
-      const file = key.split("|")[0];
-      if (files.has(file)) {
-        codeFixesCache.delete(key);
+    for (const file of files) {
+      const keysToDelete = cacheKeysByFile.get(file);
+      if (keysToDelete) {
+        for (const key of keysToDelete) {
+          codeFixesCache.delete(key);
+        }
+        cacheKeysByFile.delete(file);
       }
     }
   }
