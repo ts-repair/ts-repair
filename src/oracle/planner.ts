@@ -837,6 +837,13 @@ function toDiagInfo(d: ts.Diagnostic): { file: string; code: number; message: st
   };
 }
 
+/**
+ * Create a unique key for a diagnostic based on file, position, and error code
+ */
+function getDiagnosticKey(diagnostic: ts.Diagnostic): string {
+  return `${diagnostic.file?.fileName}|${diagnostic.start}|${diagnostic.code}`;
+}
+
 function getVerificationCacheKey(diagnostic: ts.Diagnostic, fix: { fixName: string; description: string }): string {
   return `${getDiagnosticKey(diagnostic)}|${fix.fixName}|${fix.description}`;
 }
@@ -935,10 +942,6 @@ export function plan(
 
   // OPTIMIZATION: Track diagnostics with no fixes to skip them in future iterations
   const diagnosticsWithNoFixes = new Set<string>();
-
-  function getDiagnosticKey(diagnostic: ts.Diagnostic): string {
-    return `${diagnostic.file?.fileName}|${diagnostic.start}|${diagnostic.code}`;
-  }
 
   // Builder registry for synthetic candidate generation
   const registry = opts.builderRegistry ?? defaultRegistry;
@@ -1170,14 +1173,18 @@ export function plan(
           );
         }
         const verifyTimeMs = performance.now() - verifyStart;
-        timing.verifications += verifyTimeMs;
-        timing.verificationCount++;
-        candidatesVerified++;
 
-        // Record telemetry for this verification
-        // Cone size is 1 for tsCodeFix (only modified files), or cone size for synthetic
-        const coneSize = candidate.kind === "tsCodeFix" ? 1 : filesWithErrors.size;
-        telemetry.recordVerification(coneSize, verifyTimeMs);
+        // Only count as verification if not from cache
+        if (!fromCache) {
+          timing.verifications += verifyTimeMs;
+          timing.verificationCount++;
+          candidatesVerified++;
+
+          // Record telemetry for this verification
+          // Cone size is 1 for tsCodeFix (only modified files), or cone size for synthetic
+          const coneSize = candidate.kind === "tsCodeFix" ? 1 : filesWithErrors.size;
+          telemetry.recordVerification(coneSize, verifyTimeMs);
+        }
 
         // Check memory guard - reset host if needed
         if (memoryGuard.tick()) {
@@ -1257,6 +1264,8 @@ export function plan(
     }
 
     // If the fix came from cache, re-verify it to get accurate stats (errorsBefore/After)
+    // Note: This re-verification doesn't count toward candidatesVerified budget since
+    // we're just refreshing stale data, not exploring new candidates
     if (bestFix.fromCache) {
        const verifyStart = performance.now();
        if (bestFix.candidate.kind === "tsCodeFix") {
@@ -1264,8 +1273,8 @@ export function plan(
        }
        timing.verifications += performance.now() - verifyStart;
        timing.verificationCount++;
-       candidatesVerified++;
-       
+       // Don't increment candidatesVerified - we're refreshing cached data, not exploring new candidates
+
        // Update cache with fresh result
        const cacheKey = getVerificationCacheKey(bestFix.diagnostic, bestFix.candidate);
        if (bestFix.candidate.kind === "tsCodeFix") {
