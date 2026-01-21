@@ -354,7 +354,15 @@ function verify(
   const t1 = performance.now();
   const diagnosticsAfter = host.getDiagnosticsForFiles(filesToCheck);
   verifyTiming.getDiagnostics += performance.now() - t1;
-  const errorsAfter = diagnosticsAfter.length;
+  const errorsInCheckedFilesAfter = diagnosticsAfter.length;
+
+  // Calculate total errors after (approximate)
+  // Total = Errors in checked files (fresh) + Errors in unchecked files (assumed unchanged)
+  // This avoids re-checking the entire project, keeping verification fast.
+  const errorsInUncheckedFiles = diagnosticsBefore.filter(
+    (d) => !d.file || !filesToCheck.has(d.file.fileName)
+  ).length;
+  const errorsAfter = errorsInCheckedFilesAfter + errorsInUncheckedFiles;
 
   // OPTIMIZATION: Compute keys once per diagnostic (diagnosticKey calls flattenDiagnosticMessageText)
   // Store as array so we can reuse by index without recomputing
@@ -829,6 +837,10 @@ function toDiagInfo(d: ts.Diagnostic): { file: string; code: number; message: st
   };
 }
 
+function getVerificationCacheKey(diagnostic: ts.Diagnostic, fix: { fixName: string; description: string }): string {
+  return `${getDiagnosticKey(diagnostic)}|${fix.fixName}|${fix.description}`;
+}
+
 /**
  * Generate a verified repair plan for a TypeScript project
  */
@@ -868,6 +880,37 @@ export function plan(
   // OPTIMIZATION: Cache getCodeFixes() results to avoid repeated calls
   // Key: "fileName|start|code", Value: readonly ts.CodeFixAction[]
   const codeFixesCache = new Map<string, readonly ts.CodeFixAction[]>();
+
+  // OPTIMIZATION: Cache verification results to avoid O(N^2) behavior
+  // Key: diagnosticKey + fixName + fixDescription
+  // Value: { result: VerificationResult, files: Set<string> }
+  const verificationCache = new Map<string, { result: VerificationResult; files: Set<string> }>();
+
+  function invalidateVerificationCache(modifiedFiles: Set<string>): void {
+    for (const [key, entry] of verificationCache.entries()) {
+      // Invalidate if any file modified by the cached fix has been modified
+      let invalid = false;
+      for (const file of entry.files) {
+        if (modifiedFiles.has(file)) {
+          invalid = true;
+          break;
+        }
+      }
+      
+      // Also invalidate if the diagnostic's file was modified (key is stale)
+      // The key starts with "filename|".
+      if (!invalid) {
+        const diagFile = key.split("|")[0];
+        if (modifiedFiles.has(diagFile)) {
+          invalid = true;
+        }
+      }
+
+      if (invalid) {
+        verificationCache.delete(key);
+      }
+    }
+  }
 
   function getCachedCodeFixes(diagnostic: ts.Diagnostic): readonly ts.CodeFixAction[] {
     if (!diagnostic.file) return [];
@@ -996,6 +1039,7 @@ export function plan(
       result: VerificationResult;
       risk: "low" | "medium" | "high";
       score: number; // Used by weighted strategy
+      fromCache: boolean;
     } | null = null;
 
     // Track candidates per iteration
@@ -1100,8 +1144,17 @@ export function plan(
         // Verify the candidate
         const verifyStart = performance.now();
         let result: VerificationResult;
-        if (candidate.kind === "tsCodeFix") {
+        let fromCache = false;
+        
+        const cacheKey = getVerificationCacheKey(diagnostic, candidate);
+        const cached = verificationCache?.get(cacheKey);
+
+        if (cached) {
+          result = cached.result;
+          fromCache = true;
+        } else if (candidate.kind === "tsCodeFix") {
           result = verify(host, diagnostic, candidate.action, currentDiagnostics, currentDiagnosticKeys, currentDiagnosticKeysArray);
+          verificationCache.set(cacheKey, { result, files: getFilesModifiedByFix(candidate.action) });
         } else {
           // Verify synthetic candidate using cone-based verification
           // This properly handles wide-scope fixes that affect dependent files
@@ -1171,7 +1224,7 @@ export function plan(
 
           // Is this the best fix so far?
           if (!bestFix || score > bestFix.score) {
-            bestFix = { diagnostic, candidate, result, risk, score };
+            bestFix = { diagnostic, candidate, result, risk, score, fromCache };
           }
         } else {
           // Delta scoring (default)
@@ -1182,7 +1235,7 @@ export function plan(
 
           // Is this the best fix so far?
           if (!bestFix || result.delta > bestFix.result.delta) {
-            bestFix = { diagnostic, candidate, result, risk, score: result.delta };
+            bestFix = { diagnostic, candidate, result, risk, score: result.delta, fromCache };
           }
         }
 
@@ -1201,6 +1254,23 @@ export function plan(
     if (!bestFix) {
       opts.onProgress?.("No improving fix found, stopping.");
       break;
+    }
+
+    // If the fix came from cache, re-verify it to get accurate stats (errorsBefore/After)
+    if (bestFix.fromCache) {
+       const verifyStart = performance.now();
+       if (bestFix.candidate.kind === "tsCodeFix") {
+         bestFix.result = verify(host, bestFix.diagnostic, bestFix.candidate.action, currentDiagnostics, currentDiagnosticKeys, currentDiagnosticKeysArray);
+       }
+       timing.verifications += performance.now() - verifyStart;
+       timing.verificationCount++;
+       candidatesVerified++;
+       
+       // Update cache with fresh result
+       const cacheKey = getVerificationCacheKey(bestFix.diagnostic, bestFix.candidate);
+       if (bestFix.candidate.kind === "tsCodeFix") {
+          verificationCache.set(cacheKey, { result: bestFix.result, files: getFilesModifiedByFix(bestFix.candidate.action) });
+       }
     }
 
     // Commit the best fix
@@ -1256,6 +1326,7 @@ export function plan(
 
     // Invalidate caches for modified files
     invalidateCacheForFiles(modifiedFiles);
+    invalidateVerificationCache(modifiedFiles);
     // Also clear no-fix tracking for modified files since new diagnostics may have fixes
     for (const key of diagnosticsWithNoFixes) {
       const file = key.split("|")[0];
@@ -1309,7 +1380,7 @@ export function plan(
     }));
   } else {
     const classifyStart = performance.now();
-    remaining = classifyRemaining(host, finalDiagnostics, opts);
+    remaining = classifyRemaining(host, finalDiagnostics, opts, verificationCache);
     timing.classifyRemaining = performance.now() - classifyStart;
   }
 
@@ -1414,7 +1485,8 @@ function classifySingleDiagnostic(
   opts: PlanOptions,
   diagnosticKeys: Set<string>,
   diagnosticKeysArray: string[],
-  filesWithErrors?: Set<string>
+  filesWithErrors?: Set<string>,
+  verificationCache?: Map<string, { result: VerificationResult; files: Set<string> }>
 ): { disposition: ClassifiedDiagnostic["disposition"]; candidateCount: number } {
   // Build filesWithErrors set if not provided
   const effectiveFilesWithErrors = filesWithErrors ?? new Set(
@@ -1443,7 +1515,13 @@ function classifySingleDiagnostic(
   for (const candidate of candidates.slice(0, opts.maxCandidates)) {
     // Use the old verify() for tsCodeFix, verifyWithCone for synthetic
     let result: VerificationResult;
-    if (candidate.kind === "tsCodeFix") {
+    
+    const cacheKey = getVerificationCacheKey(diagnostic, candidate);
+    const cached = verificationCache?.get(cacheKey);
+
+    if (cached) {
+      result = cached.result;
+    } else if (candidate.kind === "tsCodeFix") {
       result = verify(
         host,
         diagnostic,
@@ -1452,6 +1530,9 @@ function classifySingleDiagnostic(
         diagnosticKeys,
         diagnosticKeysArray
       );
+      if (verificationCache) {
+        verificationCache.set(cacheKey, { result, files: getFilesModifiedByFix(candidate.action) });
+      }
     } else {
       // For synthetic fixes, use verify with a manually constructed result
       // This is a simplified verification - in production we'd use verifyWithCone
@@ -1549,7 +1630,8 @@ function classifySingleDiagnostic(
 function classifyRemaining(
   host: TypeScriptHost,
   diagnostics: ts.Diagnostic[],
-  opts: PlanOptions
+  opts: PlanOptions,
+  verificationCache?: Map<string, { result: VerificationResult; files: Set<string> }>
 ): ClassifiedDiagnostic[] {
   // Group diagnostics by (code, message) for efficient classification
   const groups = new Map<string, ts.Diagnostic[]>();
@@ -1592,7 +1674,8 @@ function classifyRemaining(
       opts,
       diagnosticKeys,
       diagnosticKeysArray,
-      filesWithErrors
+      filesWithErrors,
+      verificationCache
     );
 
     // Apply same classification to all group members
