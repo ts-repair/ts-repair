@@ -59,6 +59,8 @@ Same input must produce same repair plan. No randomness, no heuristics that vary
 | `bun test --test-name-pattern "pattern"` | Run tests matching pattern |
 | `bun run build` | Build with TypeScript compiler |
 | `bun run dev src/cli.ts` | Run CLI in dev mode |
+| `ts-repair benchmark` | Run scoring strategy benchmarks |
+| `ts-repair benchmark --fixture <name>` | Benchmark specific fixture |
 
 ### Running Specific Tests
 

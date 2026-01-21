@@ -583,18 +583,22 @@ TypeScript's code fix suggestions sometimes prefer re-export paths (e.g., `impor
 
 | Component | Status | Priority | Notes |
 |-----------|--------|----------|-------|
-| Benchmark harness | 📋 Planned | Medium | Compare delta vs weighted on real projects |
-| Metrics collection | 📋 Planned | Medium | Fix quality, false positives, performance |
+| Benchmark harness | ✅ Done | Medium | `ts-repair benchmark` command with strategy comparison |
+| Metrics collection | ✅ Done | Medium | RunMetrics, BuilderMetrics, StrategyMetrics, TimingMetrics |
+| Benchmark corpus | ✅ Done | Medium | 13 fixtures: 8 synthetic, 5 builder-specific |
+| Reporter output | ✅ Done | Medium | JSON, CSV, and text formats |
 | Default selection | 📋 Planned | Low | Choose default based on benchmark results |
 | Document non-default | 📋 Planned | Low | Document when to use the other strategy |
 
+**Implementation:** See [docs/benchmarking/README.md](benchmarking/README.md) for complete documentation.
+
 **Goal:** Determine which scoring strategy (delta or weighted) should be the default, and document use cases for the other.
 
-**Metrics to measure:**
-- Fix quality (do selected fixes resolve issues without side effects?)
-- False positive rate (how often are bad fixes selected?)
-- Performance (verification count, time to plan)
-- Edge case handling (large projects, many candidates)
+**Metrics collected:**
+- Fix quality: `errorReduction`, `candidatesVerified`, `regressionCount`
+- False positive rate: `regressionCount / candidatesVerified`
+- Performance: `totalMs`, `avgVerificationMs`
+- Builder effectiveness: `matches`, `successRate`, `falsePositiveRate`
 
 ---
 
@@ -608,4 +612,4 @@ TypeScript's code fix suggestions sometimes prefer re-export paths (e.g., `impor
 ---
 
 *Last updated: January 20, 2026*
-*Phases 1-4, 2.5-2.7, 6 complete. vNext Phases 0-4 complete.*
+*Phases 1-4, 2.5-2.7, 6 complete. vNext Phases 0-4 complete. Benchmark harness complete.*
