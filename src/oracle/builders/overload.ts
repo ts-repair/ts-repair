@@ -25,6 +25,65 @@ interface DeclInfo {
 }
 
 /**
+ * Extract modifiers from a function declaration (export, async, default, etc.).
+ * Returns the modifiers as a string prefix for the function signature.
+ */
+export function extractModifiers(decl: ts.FunctionDeclaration): string {
+  const modifiers: string[] = [];
+
+  // Use ts.getModifiers for compatibility (available in TS 4.8+)
+  // Falls back to decl.modifiers for older versions
+  const declModifiers = ts.getModifiers?.(decl) ?? decl.modifiers;
+
+  if (declModifiers) {
+    for (const mod of declModifiers) {
+      switch (mod.kind) {
+        case ts.SyntaxKind.ExportKeyword:
+          modifiers.push("export");
+          break;
+        case ts.SyntaxKind.DefaultKeyword:
+          modifiers.push("default");
+          break;
+        case ts.SyntaxKind.AsyncKeyword:
+          modifiers.push("async");
+          break;
+        case ts.SyntaxKind.DeclareKeyword:
+          modifiers.push("declare");
+          break;
+        // Skip other modifiers like public/private/protected which don't apply to function declarations
+      }
+    }
+  }
+
+  return modifiers.length > 0 ? modifiers.join(" ") + " " : "";
+}
+
+/**
+ * Get the return type from the implementation signature.
+ * Returns the type string or "void" if no explicit return type.
+ */
+export function getImplementationReturnType(
+  decls: ts.FunctionDeclaration[],
+  sourceFile: ts.SourceFile
+): string {
+  // Find the implementation (the one with a body)
+  const impl = decls.find((d) => d.body !== undefined);
+  if (!impl) {
+    return "void";
+  }
+
+  // If there's an explicit return type, extract it from source
+  if (impl.type) {
+    const start = impl.type.getStart(sourceFile);
+    const end = impl.type.getEnd();
+    return sourceFile.text.slice(start, end);
+  }
+
+  // No explicit return type - default to void
+  return "void";
+}
+
+/**
  * Find the nearest ancestor call expression from a given node.
  */
 function findAncestorCallExpression(
@@ -199,7 +258,19 @@ function generateCatchAllOverload(
     description = `Add overload: ${funcName}(${params.replace(/: unknown/g, "")})`;
   }
 
-  const newOverload = `export function ${funcName}(${params}): void;\n`;
+  // Extract modifiers and return type from the implementation
+  const impl = declInfo.existingOverloads.find((d) => d.body !== undefined);
+  const modifiers = impl ? extractModifiers(impl) : "";
+  let returnType = sourceFile
+    ? getImplementationReturnType(declInfo.existingOverloads, sourceFile)
+    : "void";
+
+  // If function is async and return type is not already a Promise, wrap it
+  if (modifiers.includes("async") && !returnType.startsWith("Promise")) {
+    returnType = `Promise<${returnType}>`;
+  }
+
+  const newOverload = `${modifiers}function ${funcName}(${params}): ${returnType};\n`;
 
   const change: FileChange = {
     file: declInfo.file,
@@ -241,7 +312,9 @@ export const OverloadRepairBuilder: SolutionBuilder = {
     if (!node) return false;
 
     const callExpr = findAncestorCallExpression(node);
-    return callExpr !== undefined;
+    if (!callExpr) return false;
+
+    return true;
   },
 
   generate(ctx: BuilderContext): CandidateFix[] {
