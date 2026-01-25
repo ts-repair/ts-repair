@@ -7,6 +7,7 @@ This directory contains agent skills for integrating ts-repair with AI coding as
 | Platform | Skill Location | Description |
 |----------|----------------|-------------|
 | **Claude Code** | `claude-code/ts-repair/` | Skill for Anthropic's Claude Code CLI |
+| **Claude Code** | `claude-code/ts-expert-repair/` | Expert skill for developing and testing complex error repairs |
 | **OpenCode** | `opencode/ts-repair/` | Skill for OpenCode |
 | **Codex CLI** | `codex/ts-repair/` | Skill for OpenAI's Codex CLI |
 
