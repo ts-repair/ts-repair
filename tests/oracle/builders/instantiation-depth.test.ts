@@ -335,4 +335,133 @@ describe("InstantiationDepthBuilder", () => {
       expect(candidates).toHaveLength(0);
     });
   });
+
+  describe("indirect detection (tiered strategy)", () => {
+    it("detects recursive types when error is at call site", () => {
+      const host = createTypeScriptHost(
+        path.join(FIXTURES_DIR, "instantiation-depth-indirect/tsconfig.json")
+      );
+      const diagnostics = host.getDiagnostics();
+
+      // Find a TS2589 error in consumer.ts (not types.ts)
+      const consumerError = diagnostics.find(
+        (d) => d.code === 2589 && d.file?.fileName.includes("consumer.ts")
+      );
+      expect(consumerError).toBeDefined();
+
+      const ctx = createBuilderContext(consumerError!, host, new Set(), diagnostics);
+
+      // Should still match even though error is in consumer.ts
+      expect(InstantiationDepthBuilder.matches(ctx)).toBe(true);
+    });
+
+    it("generates fix targeting types.ts when error is in consumer.ts", () => {
+      const host = createTypeScriptHost(
+        path.join(FIXTURES_DIR, "instantiation-depth-indirect/tsconfig.json")
+      );
+      const diagnostics = host.getDiagnostics();
+
+      // Find a TS2589 error in consumer.ts
+      const consumerError = diagnostics.find(
+        (d) => d.code === 2589 && d.file?.fileName.includes("consumer.ts")
+      );
+      expect(consumerError).toBeDefined();
+
+      const ctx = createBuilderContext(consumerError!, host, new Set(), diagnostics);
+      const candidates = InstantiationDepthBuilder.generate(ctx);
+
+      expect(candidates.length).toBeGreaterThan(0);
+
+      // At least one fix should target types.ts where Deep<T> is defined
+      const candidate = candidates[0];
+      expect(candidate.kind).toBe("synthetic");
+
+      if (candidate.kind === "synthetic") {
+        expect(candidate.changes[0].file).toContain("types.ts");
+      }
+    });
+
+    it("uses enclosing type context to find recursive types", () => {
+      const host = createTypeScriptHost(
+        path.join(FIXTURES_DIR, "instantiation-depth-indirect/tsconfig.json")
+      );
+      const diagnostics = host.getDiagnostics();
+
+      // All TS2589 errors should be matchable
+      const ts2589Errors = diagnostics.filter((d) => d.code === 2589);
+      expect(ts2589Errors.length).toBeGreaterThan(0);
+
+      for (const error of ts2589Errors) {
+        const ctx = createBuilderContext(error, host, new Set(), diagnostics);
+        const matched = InstantiationDepthBuilder.matches(ctx);
+        expect(matched).toBe(true);
+      }
+    });
+
+    it("finds recursive type through function return type analysis", () => {
+      const host = createTypeScriptHost(
+        path.join(FIXTURES_DIR, "instantiation-depth-indirect/tsconfig.json")
+      );
+      const diagnostics = host.getDiagnostics();
+
+      const ts2589 = diagnostics.find((d) => d.code === 2589);
+      expect(ts2589).toBeDefined();
+
+      const ctx = createBuilderContext(ts2589!, host, new Set(), diagnostics);
+      const candidates = InstantiationDepthBuilder.generate(ctx);
+
+      // Should find a recursive type (UnwrapPromise or DeepFlatten) and generate fix
+      expect(candidates.length).toBeGreaterThan(0);
+
+      const candidate = candidates[0];
+      if (candidate.kind === "synthetic") {
+        // The type should be one of the recursive types from types.ts
+        expect(["UnwrapPromise", "DeepFlatten"]).toContain(candidate.metadata?.typeName);
+      }
+    });
+
+    it("correlates multiple TS2589 diagnostics to find recursive types", () => {
+      const host = createTypeScriptHost(
+        path.join(FIXTURES_DIR, "instantiation-depth-indirect/tsconfig.json")
+      );
+      const diagnostics = host.getDiagnostics();
+
+      // Multiple TS2589 errors should all point to recursive types
+      const ts2589Errors = diagnostics.filter((d) => d.code === 2589);
+      expect(ts2589Errors.length).toBeGreaterThan(1);
+
+      const typeNames = new Set<string>();
+
+      for (const error of ts2589Errors) {
+        const ctx = createBuilderContext(error, host, new Set(), diagnostics);
+        const candidates = InstantiationDepthBuilder.generate(ctx);
+
+        for (const candidate of candidates) {
+          if (candidate.kind === "synthetic" && candidate.metadata?.typeName) {
+            typeNames.add(candidate.metadata.typeName as string);
+          }
+        }
+      }
+
+      // Errors should be related to the recursive types UnwrapPromise and/or DeepFlatten
+      const hasRecursiveType = typeNames.has("UnwrapPromise") || typeNames.has("DeepFlatten");
+      expect(hasRecursiveType).toBe(true);
+    });
+
+    it("limits results to MAX_CANDIDATES", () => {
+      const host = createTypeScriptHost(
+        path.join(FIXTURES_DIR, "instantiation-depth-indirect/tsconfig.json")
+      );
+      const diagnostics = host.getDiagnostics();
+
+      const ts2589 = diagnostics.find((d) => d.code === 2589);
+      expect(ts2589).toBeDefined();
+
+      const ctx = createBuilderContext(ts2589!, host, new Set(), diagnostics);
+      const candidates = InstantiationDepthBuilder.generate(ctx);
+
+      // Should not exceed 4 candidates
+      expect(candidates.length).toBeLessThanOrEqual(4);
+    });
+  });
 });

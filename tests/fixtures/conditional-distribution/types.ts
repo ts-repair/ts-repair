@@ -1,19 +1,21 @@
-// Conditional type with naked type parameter
-type Filter<T, U> = T extends U ? T : never;
+/**
+ * Fixture demonstrating conditional type distribution issues.
+ *
+ * Distribution causes conditional types to be applied to each member of a union
+ * separately, which can lead to type errors with unions visible in the message.
+ */
 
-// Higher-order type that depends on Filter
-type StringFilter<T> = Filter<T, string>;
+// Distributive conditional type
+type ToArray<T> = T extends unknown ? T[] : never;
 
-// This function tries to return a concrete value but the return type
-// is a conditional type that distributes, causing a type mismatch
-function extractString<T>(_value: T): StringFilter<T> {
-  // TS2322: Type '"default"' is not assignable to type 'Filter<T, string>'
-  // This is because Filter<T, string> is a distributive conditional type
-  // When T is unknown, it doesn't simplify to anything assignable from string
-  return "default";
-}
+// ToArray<string | number> distributes to string[] | number[]
+// This means you can't assign a mixed array (string | number)[] to it
 
-// Another distribution-prone type for testing
-type IsArray<T> = T extends unknown[] ? true : false;
+// Concrete usage that shows the union in the error message
+type Input = string | number;
 
-export { Filter, StringFilter, extractString, IsArray };
+// TS2322: Type '(string | number)[]' is not assignable to type 'string[] | number[]'
+// The error message contains the union pattern which we can detect
+const items: ToArray<Input> = [1, "hello", 2, "world"];
+
+export { ToArray, Input, items };

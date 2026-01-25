@@ -10,7 +10,12 @@ import {
   defaultRegistry,
 } from "../../../src/oracle/builder.js";
 import { createTypeScriptHost } from "../../../src/oracle/typescript.js";
-import { OverloadRepairBuilder } from "../../../src/oracle/builders/overload.js";
+import {
+  OverloadRepairBuilder,
+  extractModifiers,
+  getImplementationReturnType,
+} from "../../../src/oracle/builders/overload.js";
+import ts from "typescript";
 
 const FIXTURES_DIR = path.join(import.meta.dir, "../../fixtures");
 
@@ -286,6 +291,262 @@ describe("OverloadRepairBuilder", () => {
         );
         expect(OverloadRepairBuilder.matches(ctx)).toBe(false);
       }
+    });
+  });
+
+  describe("modifier and return type handling", () => {
+    // Helper to find diagnostic by function name on the same line
+    function findDiagnosticForFunc(
+      diagnostics: import("typescript").Diagnostic[],
+      funcName: string
+    ) {
+      return diagnostics.find((d) => {
+        if (d.code !== 2769 || !d.file || d.start === undefined) return false;
+        // Get the line containing the diagnostic
+        const startOfLine = d.file.text.lastIndexOf("\n", d.start) + 1;
+        const endOfLine = d.file.text.indexOf("\n", d.start);
+        const line = d.file.text.slice(startOfLine, endOfLine);
+        return line.includes(funcName);
+      });
+    }
+
+    it("generates non-exported overload for non-exported function", () => {
+      const host = createTypeScriptHost(
+        path.join(FIXTURES_DIR, "overload-modifiers/tsconfig.json")
+      );
+      const diagnostics = host.getDiagnostics();
+
+      // Find the TS2769 for processInternal (non-exported function)
+      const ts2769 = findDiagnosticForFunc(diagnostics, "processInternal");
+      expect(ts2769).toBeDefined();
+
+      const ctx = createBuilderContext(ts2769!, host, new Set(), diagnostics);
+      const candidates = OverloadRepairBuilder.generate(ctx);
+
+      expect(candidates.length).toBeGreaterThan(0);
+      const candidate = candidates[0];
+      expect(candidate.kind).toBe("synthetic");
+
+      if (candidate.kind === "synthetic") {
+        const newText = candidate.changes[0].newText;
+        // Should NOT have 'export' modifier for non-exported function
+        expect(newText).not.toMatch(/^export\s/);
+        expect(newText).toMatch(/^function\s+processInternal/);
+      }
+    });
+
+    it("generates async overload for async function", () => {
+      const host = createTypeScriptHost(
+        path.join(FIXTURES_DIR, "overload-modifiers/tsconfig.json")
+      );
+      const diagnostics = host.getDiagnostics();
+
+      // Find the TS2769 for fetchData (async exported function)
+      const ts2769 = findDiagnosticForFunc(diagnostics, "fetchData");
+      expect(ts2769).toBeDefined();
+
+      const ctx = createBuilderContext(ts2769!, host, new Set(), diagnostics);
+      const candidates = OverloadRepairBuilder.generate(ctx);
+
+      expect(candidates.length).toBeGreaterThan(0);
+      const candidate = candidates[0];
+      expect(candidate.kind).toBe("synthetic");
+
+      if (candidate.kind === "synthetic") {
+        const newText = candidate.changes[0].newText;
+        // Should have 'export async' modifiers
+        expect(newText).toMatch(/^export\s+async\s+function\s+fetchData/);
+      }
+    });
+
+    it("uses actual return type instead of hardcoded void", () => {
+      const host = createTypeScriptHost(
+        path.join(FIXTURES_DIR, "overload-modifiers/tsconfig.json")
+      );
+      const diagnostics = host.getDiagnostics();
+
+      // Find the TS2769 for compute (has explicit return type)
+      const ts2769 = findDiagnosticForFunc(diagnostics, "compute");
+      expect(ts2769).toBeDefined();
+
+      const ctx = createBuilderContext(ts2769!, host, new Set(), diagnostics);
+      const candidates = OverloadRepairBuilder.generate(ctx);
+
+      expect(candidates.length).toBeGreaterThan(0);
+      const candidate = candidates[0];
+      expect(candidate.kind).toBe("synthetic");
+
+      if (candidate.kind === "synthetic") {
+        const newText = candidate.changes[0].newText;
+        // Should use the actual return type from implementation
+        expect(newText).toContain("number | string");
+        expect(newText).not.toContain(": void;");
+      }
+    });
+
+    it("uses Promise return type for async function", () => {
+      const host = createTypeScriptHost(
+        path.join(FIXTURES_DIR, "overload-modifiers/tsconfig.json")
+      );
+      const diagnostics = host.getDiagnostics();
+
+      // Find the TS2769 for fetchData
+      const ts2769 = findDiagnosticForFunc(diagnostics, "fetchData");
+      expect(ts2769).toBeDefined();
+
+      const ctx = createBuilderContext(ts2769!, host, new Set(), diagnostics);
+      const candidates = OverloadRepairBuilder.generate(ctx);
+
+      expect(candidates.length).toBeGreaterThan(0);
+      const candidate = candidates[0];
+      expect(candidate.kind).toBe("synthetic");
+
+      if (candidate.kind === "synthetic") {
+        const newText = candidate.changes[0].newText;
+        // Should use Promise<string> return type
+        expect(newText).toContain("Promise<string>");
+      }
+    });
+  });
+
+  describe("unsupported cases", () => {
+    it("matches TS2769 for class method calls but generates no candidates", () => {
+      const host = createTypeScriptHost(
+        path.join(FIXTURES_DIR, "overload-unsupported/tsconfig.json")
+      );
+      const diagnostics = host.getDiagnostics();
+
+      // Find the TS2769 for class method call (processor.process)
+      const ts2769 = diagnostics.find((d) => {
+        if (d.code !== 2769 || !d.file || d.start === undefined) return false;
+        // Get the line containing the diagnostic
+        const startOfLine = d.file.text.lastIndexOf("\n", d.start) + 1;
+        const endOfLine = d.file.text.indexOf("\n", d.start);
+        const line = d.file.text.slice(startOfLine, endOfLine);
+        return line.includes("processor.process");
+      });
+      expect(ts2769).toBeDefined();
+
+      const ctx = createBuilderContext(ts2769!, host, new Set(), diagnostics);
+
+      // matches() returns true for TS2769 call expressions
+      expect(OverloadRepairBuilder.matches(ctx)).toBe(true);
+      // But generate() returns no candidates because no function declaration is found
+      const candidates = OverloadRepairBuilder.generate(ctx);
+      expect(candidates).toHaveLength(0);
+    });
+  });
+
+  describe("extractModifiers()", () => {
+    // Helper to parse a function declaration from source
+    function parseFuncDecl(source: string): ts.FunctionDeclaration {
+      const sourceFile = ts.createSourceFile(
+        "test.ts",
+        source,
+        ts.ScriptTarget.Latest,
+        true
+      );
+      let funcDecl: ts.FunctionDeclaration | undefined;
+      ts.forEachChild(sourceFile, (node) => {
+        if (ts.isFunctionDeclaration(node)) {
+          funcDecl = node;
+        }
+      });
+      if (!funcDecl) throw new Error("No function declaration found");
+      return funcDecl;
+    }
+
+    it("extracts export modifier", () => {
+      const decl = parseFuncDecl("export function foo() {}");
+      expect(extractModifiers(decl)).toBe("export ");
+    });
+
+    it("extracts async modifier", () => {
+      const decl = parseFuncDecl("async function foo() {}");
+      expect(extractModifiers(decl)).toBe("async ");
+    });
+
+    it("extracts export async modifiers together", () => {
+      const decl = parseFuncDecl("export async function foo() {}");
+      expect(extractModifiers(decl)).toBe("export async ");
+    });
+
+    it("extracts default modifier", () => {
+      const decl = parseFuncDecl("export default function foo() {}");
+      expect(extractModifiers(decl)).toBe("export default ");
+    });
+
+    it("extracts declare modifier", () => {
+      const decl = parseFuncDecl("declare function foo(): void;");
+      expect(extractModifiers(decl)).toBe("declare ");
+    });
+
+    it("returns empty string when no modifiers", () => {
+      const decl = parseFuncDecl("function foo() {}");
+      expect(extractModifiers(decl)).toBe("");
+    });
+  });
+
+  describe("getImplementationReturnType()", () => {
+    // Helper to parse function declarations from source
+    function parseFuncDecls(source: string): {
+      decls: ts.FunctionDeclaration[];
+      sourceFile: ts.SourceFile;
+    } {
+      const sourceFile = ts.createSourceFile(
+        "test.ts",
+        source,
+        ts.ScriptTarget.Latest,
+        true
+      );
+      const decls: ts.FunctionDeclaration[] = [];
+      ts.forEachChild(sourceFile, (node) => {
+        if (ts.isFunctionDeclaration(node)) {
+          decls.push(node);
+        }
+      });
+      return { decls, sourceFile };
+    }
+
+    it("finds correct return type from implementation", () => {
+      const { decls, sourceFile } = parseFuncDecls(`
+        function foo(x: string): string;
+        function foo(x: number): number;
+        function foo(x: unknown): string | number {
+          return x as string | number;
+        }
+      `);
+      expect(getImplementationReturnType(decls, sourceFile)).toBe(
+        "string | number"
+      );
+    });
+
+    it("returns void when no explicit return type specified", () => {
+      const { decls, sourceFile } = parseFuncDecls(`
+        function bar() {
+          console.log("hello");
+        }
+      `);
+      expect(getImplementationReturnType(decls, sourceFile)).toBe("void");
+    });
+
+    it("returns void when no implementation found", () => {
+      const { decls, sourceFile } = parseFuncDecls(`
+        declare function baz(x: string): string;
+      `);
+      // Declared functions have no body, so no implementation
+      expect(getImplementationReturnType(decls, sourceFile)).toBe("void");
+    });
+
+    it("finds Promise return type for async function", () => {
+      const { decls, sourceFile } = parseFuncDecls(`
+        async function fetchData(): Promise<string> {
+          return "data";
+        }
+      `);
+      expect(getImplementationReturnType(decls, sourceFile)).toBe(
+        "Promise<string>"
+      );
     });
   });
 });
