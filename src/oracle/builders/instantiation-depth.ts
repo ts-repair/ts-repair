@@ -25,6 +25,7 @@ import type {
 } from "../../output/types.js";
 import type { TypeScriptHost } from "../typescript.js";
 import { createSyntheticFix } from "../candidate.js";
+import { collectTypeReferences } from "../type-utils.js";
 
 /** Maximum candidates to return */
 const MAX_CANDIDATES = 4;
@@ -190,56 +191,6 @@ function analyzeRecursiveType(
 // =============================================================================
 
 /**
- * Collect type references from a TypeNode recursively.
- */
-function collectTypeRefsFromTypeNode(node: ts.TypeNode, typeNames: Set<string>): void {
-  if (ts.isTypeReferenceNode(node)) {
-    if (ts.isIdentifier(node.typeName)) {
-      typeNames.add(node.typeName.text);
-    }
-    // Also collect from type arguments
-    if (node.typeArguments) {
-      for (const arg of node.typeArguments) {
-        collectTypeRefsFromTypeNode(arg, typeNames);
-      }
-    }
-  } else if (ts.isUnionTypeNode(node) || ts.isIntersectionTypeNode(node)) {
-    for (const t of node.types) {
-      collectTypeRefsFromTypeNode(t, typeNames);
-    }
-  } else if (ts.isArrayTypeNode(node)) {
-    collectTypeRefsFromTypeNode(node.elementType, typeNames);
-  } else if (ts.isTupleTypeNode(node)) {
-    for (const elem of node.elements) {
-      collectTypeRefsFromTypeNode(elem, typeNames);
-    }
-  } else if (ts.isConditionalTypeNode(node)) {
-    collectTypeRefsFromTypeNode(node.checkType, typeNames);
-    collectTypeRefsFromTypeNode(node.extendsType, typeNames);
-    collectTypeRefsFromTypeNode(node.trueType, typeNames);
-    collectTypeRefsFromTypeNode(node.falseType, typeNames);
-  } else if (ts.isFunctionTypeNode(node)) {
-    if (node.type) {
-      collectTypeRefsFromTypeNode(node.type, typeNames);
-    }
-    for (const param of node.parameters) {
-      if (param.type) {
-        collectTypeRefsFromTypeNode(param.type, typeNames);
-      }
-    }
-  } else if (ts.isParenthesizedTypeNode(node)) {
-    collectTypeRefsFromTypeNode(node.type, typeNames);
-  } else if (ts.isIndexedAccessTypeNode(node)) {
-    collectTypeRefsFromTypeNode(node.objectType, typeNames);
-    collectTypeRefsFromTypeNode(node.indexType, typeNames);
-  } else if (ts.isMappedTypeNode(node)) {
-    if (node.type) {
-      collectTypeRefsFromTypeNode(node.type, typeNames);
-    }
-  }
-}
-
-/**
  * Tier 1: Find type references directly at the diagnostic position.
  */
 function findDirectTypeReferencesAtPosition(ctx: BuilderContext): Set<string> {
@@ -262,7 +213,7 @@ function findDirectTypeReferencesAtPosition(ctx: BuilderContext): Set<string> {
       // Also collect from type arguments
       if (node.typeArguments) {
         for (const arg of node.typeArguments) {
-          collectTypeRefsFromTypeNode(arg, typeNames);
+          collectTypeReferences(arg, typeNames);
         }
       }
     }
@@ -293,7 +244,7 @@ function findEnclosingTypeContexts(ctx: BuilderContext): Set<string> {
     if (ts.isTypeAliasDeclaration(current)) {
       typeNames.add(current.name.text);
       if (current.type) {
-        collectTypeRefsFromTypeNode(current.type, typeNames);
+        collectTypeReferences(current.type, typeNames);
       }
       break;
     }
@@ -302,7 +253,7 @@ function findEnclosingTypeContexts(ctx: BuilderContext): Set<string> {
     if (ts.isVariableDeclaration(current) || ts.isPropertyDeclaration(current) ||
         ts.isPropertySignature(current) || ts.isParameter(current)) {
       if (current.type) {
-        collectTypeRefsFromTypeNode(current.type, typeNames);
+        collectTypeReferences(current.type, typeNames);
       }
     }
 
@@ -310,18 +261,18 @@ function findEnclosingTypeContexts(ctx: BuilderContext): Set<string> {
     if (ts.isFunctionDeclaration(current) || ts.isFunctionExpression(current) ||
         ts.isArrowFunction(current) || ts.isMethodDeclaration(current)) {
       if (current.type) {
-        collectTypeRefsFromTypeNode(current.type, typeNames);
+        collectTypeReferences(current.type, typeNames);
       }
       for (const param of current.parameters) {
         if (param.type) {
-          collectTypeRefsFromTypeNode(param.type, typeNames);
+          collectTypeReferences(param.type, typeNames);
         }
       }
     }
 
     // Type assertion (as T)
     if (ts.isAsExpression(current) && current.type) {
-      collectTypeRefsFromTypeNode(current.type, typeNames);
+      collectTypeReferences(current.type, typeNames);
     }
 
     current = current.parent;
@@ -360,7 +311,7 @@ function findReturnTypeRefsIfCallSite(ctx: BuilderContext): Set<string> {
   // Extract type arguments from the call
   if (callExpr.typeArguments) {
     for (const typeArg of callExpr.typeArguments) {
-      collectTypeRefsFromTypeNode(typeArg, typeNames);
+      collectTypeReferences(typeArg, typeNames);
     }
   }
 
@@ -378,7 +329,7 @@ function findReturnTypeRefsIfCallSite(ctx: BuilderContext): Set<string> {
       ts.forEachChild(sourceFile, (node) => {
         if (ts.isFunctionDeclaration(node) && node.name?.text === funcName) {
           if (node.type) {
-            collectTypeRefsFromTypeNode(node.type, typeNames);
+            collectTypeReferences(node.type, typeNames);
           }
         }
         // Also check variable declarations with arrow functions
@@ -387,13 +338,13 @@ function findReturnTypeRefsIfCallSite(ctx: BuilderContext): Set<string> {
             if (ts.isIdentifier(decl.name) && decl.name.text === funcName) {
               // Check type annotation
               if (decl.type) {
-                collectTypeRefsFromTypeNode(decl.type, typeNames);
+                collectTypeReferences(decl.type, typeNames);
               }
               // Check initializer if it's a function
               if (decl.initializer) {
                 if (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer)) {
                   if (decl.initializer.type) {
-                    collectTypeRefsFromTypeNode(decl.initializer.type, typeNames);
+                    collectTypeReferences(decl.initializer.type, typeNames);
                   }
                 }
               }

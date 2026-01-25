@@ -65,6 +65,7 @@ import type {
 } from "../../output/types.js";
 import type { TypeScriptHost } from "../typescript.js";
 import { createSyntheticFix } from "../candidate.js";
+import { collectTypeReferences } from "../type-utils.js";
 
 /**
  * Information about a conditional type that may need repair.
@@ -313,59 +314,6 @@ function extractTypeReferencesFromContext(ctx: BuilderContext): Set<string> {
   return typeNames;
 }
 
-/**
- * Recursively collect type reference names from a type node.
- */
-function collectTypeReferences(typeNode: ts.TypeNode, names: Set<string>): void {
-  if (ts.isTypeReferenceNode(typeNode)) {
-    // Get the type name
-    if (ts.isIdentifier(typeNode.typeName)) {
-      names.add(typeNode.typeName.text);
-    } else if (ts.isQualifiedName(typeNode.typeName)) {
-      // For qualified names like Namespace.Type, collect the full path
-      names.add(typeNode.typeName.right.text);
-    }
-    // Also collect from type arguments
-    if (typeNode.typeArguments) {
-      for (const arg of typeNode.typeArguments) {
-        collectTypeReferences(arg, names);
-      }
-    }
-  } else if (ts.isUnionTypeNode(typeNode) || ts.isIntersectionTypeNode(typeNode)) {
-    for (const subType of typeNode.types) {
-      collectTypeReferences(subType, names);
-    }
-  } else if (ts.isArrayTypeNode(typeNode)) {
-    collectTypeReferences(typeNode.elementType, names);
-  } else if (ts.isTupleTypeNode(typeNode)) {
-    for (const element of typeNode.elements) {
-      collectTypeReferences(element, names);
-    }
-  } else if (ts.isConditionalTypeNode(typeNode)) {
-    collectTypeReferences(typeNode.checkType, names);
-    collectTypeReferences(typeNode.extendsType, names);
-    collectTypeReferences(typeNode.trueType, names);
-    collectTypeReferences(typeNode.falseType, names);
-  } else if (ts.isFunctionTypeNode(typeNode)) {
-    if (typeNode.type) {
-      collectTypeReferences(typeNode.type, names);
-    }
-    for (const param of typeNode.parameters) {
-      if (param.type) {
-        collectTypeReferences(param.type, names);
-      }
-    }
-  } else if (ts.isParenthesizedTypeNode(typeNode)) {
-    collectTypeReferences(typeNode.type, names);
-  } else if (ts.isIndexedAccessTypeNode(typeNode)) {
-    collectTypeReferences(typeNode.objectType, names);
-    collectTypeReferences(typeNode.indexType, names);
-  } else if (ts.isMappedTypeNode(typeNode)) {
-    if (typeNode.type) {
-      collectTypeReferences(typeNode.type, names);
-    }
-  }
-}
 
 /**
  * Pattern to detect TypeScript 'never' type in error messages.
@@ -499,6 +447,8 @@ function evaluateDistributionMatch(ctx: BuilderContext): DistributionMatchResult
   // Get all conditional types in the project
   const allConditionals = getAllConditionalTypes(ctx);
   if (allConditionals.length === 0) {
+    // Cache the empty result to avoid repeated computation
+    distributionMatchCache.set(ctx.diagnostic, result);
     return result;
   }
 
