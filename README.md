@@ -234,4 +234,6 @@ mise run test      # Run tests
 
 ## License
 
-MIT
+MIT License - Copyright 2026 West Creek Labs
+
+See [LICENSE](LICENSE) for details.
